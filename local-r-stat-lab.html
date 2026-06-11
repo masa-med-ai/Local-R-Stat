@@ -118,6 +118,14 @@ table.preview th{background:#F3F6F4;position:sticky;top:0}
 .helpbox h4:first-child{margin-top:0}
 .helpbox ul{padding-left:1.25rem;margin:.1rem 0}
 .helpbox b{color:#163A56}
+.interp{border:1px solid var(--line);border-radius:8px;padding:.9rem 1.1rem;font-size:.86rem;line-height:1.9;background:#FBFCFA}
+.interp.sig{background:#EFF8F1;border-color:#BCDFC6;color:#1C4A2E}
+.interp.ns{background:#FBF6EC;border-color:#E8D9B8;color:#5C4A1E}
+.interp h4{font-size:.8rem;margin-bottom:.35rem}
+.interp div{margin-bottom:.2rem}
+.outbar{display:flex;gap:.5rem;flex-wrap:wrap}
+.minibtn{background:#fff;border:1px solid var(--line);border-radius:6px;padding:.28rem .8rem;font-size:.76rem;color:var(--ink-soft)}
+.minibtn:hover{border-color:var(--r-blue);color:var(--r-blue)}
 .optrow{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.84rem}
 .optrow label{display:flex;align-items:center;gap:.35rem}
 .runbtn{
@@ -519,6 +527,174 @@ glm: `
 <li>連続変数のORは「その変数が1単位増えるごと」の値です（年齢なら1歳ごと）。</li>
 </ul>
 <h4>注意</h4>ORはリスク比とは別物で、アウトカムの頻度が高い（10%超）と乖離します。目安として<b>イベント数が説明変数1個につき10件以上</b>（EPV≥10）ないと結果は不安定です。`,
+
+paired: `
+<h4>いつ使う？</h4><b>同じ対象を2回測定した</b>連続値の比較（例: 同じ患者の治療前後の血圧）。データに「ペアの対応」があるときは、独立2群比較（t検定）ではなくこちらを使います。
+<h4>結果の見方</h4>
+<ul>
+<li>検定しているのは<b>「差（後−前）の平均が0か」</b>です。各人の前後差に注目するため、個人差のばらつきが消えて検出力が上がります。</li>
+<li>差の分布が正規分布に近ければ<b>対応のあるt検定</b>、偏っていれば（差のShapiro-Wilkでp &lt; 0.05なら）<b>Wilcoxon符号付き順位検定</b>を重視します。</li>
+</ul>
+<h4>注意</h4>欠損などでペアが崩れた行は自動的に除外されます。前後で対象が異なるデータには使えません（その場合は2群比較へ）。`,
+
+roc: `
+<h4>いつ使う？</h4>連続値の検査・マーカー（腫瘍マーカー、スコアなど）が、2値のアウトカム（疾患あり/なし等）を<b>どれだけ見分けられるか</b>を評価し、<b>カットオフ値</b>を決めるときに使います。
+<h4>結果の見方</h4>
+<ul>
+<li><b>AUC</b>（曲線下面積）: 0.5＝コイン投げと同じ（判別能なし）、1.0＝完全判別。目安: 0.7〜0.8 許容範囲 / 0.8〜0.9 良好 / 0.9以上 非常に良好。</li>
+<li><b>95%CIの下限が0.5を超えていれば</b>「偶然以上の判別能がある」と言えます。</li>
+<li><b>最適カットオフ（Youden index）</b>: 感度＋特異度が最大になる点。その点での感度・特異度が表示されます。</li>
+</ul>
+<h4>注意</h4>カットオフは目的で変えるべきです（見逃したくないスクリーニングなら感度重視、確定診断なら特異度重視）。同じデータで決めたカットオフは性能を過大評価しがちなので、別データでの検証が理想です。`,
+
+synth: `
+<h4>何のための機能？</h4>患者データそのものを生成AI（ChatGPT等）にアップロードするのは情報管理上問題があります。この機能は<b>実データと同じ「構造」を持つ偽データ</b>を作るので、それをAIに渡せば、コードのデバッグや解析方法の相談を安全に行えます。
+<h4>何が保たれ、何が変わる？</h4>
+<ul>
+<li><b>保たれるもの</b>: 列名、各列の型（数値/カテゴリ）、行数、数値の平均・SD・おおよその範囲、カテゴリの選択肢と出現比率、欠損（NA）の割合。群分け変数を指定すれば、群ごとの分布の違いも再現します。</li>
+<li><b>完全に変わるもの</b>: <b>すべてのセルの中身</b>。数値は分布から引き直し、カテゴリは比率に従って振り直すため、実在する患者の値は1つも残りません。行どうしの対応も壊れます。</li>
+</ul>
+<h4>使い方</h4>実行すると偽データのプレビューと「⬇ ダミーCSVをダウンロード」ボタンが出ます。落としたCSVをそのままAIに渡してください。
+<h4>注意</h4>これは統計的性質を真似た<b>合成データ</b>であり、匿名化された実データではありません。逆に、本物の解析結果（有意差など）はこの偽データでは再現されないため、あくまでコードや手順の相談用と考えてください。`,
+};
+
+/* =========================================================
+   Dynamic interpretation engine
+   （R出力中の @@KV key=value 行から、平易な解釈文を自動生成）
+========================================================= */
+const Pn = s => { const v = parseFloat(s); return isNaN(v) ? null : v; };
+const pj = p => p < 0.001 ? 'p < 0.001' : 'p = ' + Number(p.toPrecision(2));
+const g4 = s => { const v = parseFloat(s); return isNaN(v) ? escHtml(String(s)) : String(Number(v.toPrecision(4))); };
+const NS_NOTE = 'これは「差がない」と証明されたという意味では<b>ありません</b>。「差があるという十分な証拠が得られなかった」が正しい解釈で、症例数が少ない場合にも起こります。';
+function card(sig, body){
+  const cls = sig === null ? '' : (sig ? 'sig' : 'ns');
+  return `<div class="interp ${cls}"><h4>📖 この結果の解釈（有意水準 α = 0.05）</h4>${body}</div>`;
+}
+function h0(t){ return `<div><b>帰無仮説 H₀:</b>「${t}」</div>`; }
+function judge(p, rej, keep){
+  return p < 0.05
+    ? `<div><b>判定:</b> ${pj(p)} は 0.05 より小さい → H₀を<b>棄却</b>します。つまり ${rej}</div>`
+    : `<div><b>判定:</b> ${pj(p)} は 0.05 以上 → H₀を<b>棄却できません</b>。${keep}</div>`;
+}
+
+const INTERPRET = {
+  two: kv => {
+    const p = Pn(kv.p_t); if (p === null) return '';
+    const pw = Pn(kv.p_w), m1 = Pn(kv.m1), m2 = Pn(kv.m2);
+    const dir = (m1 !== null && m2 !== null)
+      ? `データ上は ${escHtml(kv.g2)}（平均 ${g4(kv.m2)}）の方が ${escHtml(kv.g1)}（平均 ${g4(kv.m1)}）より${m2 > m1 ? '高い' : '低い'}方向です。` : '';
+    let extra = '';
+    if (pw !== null && ((p < 0.05) !== (pw < 0.05)))
+      extra = `<div>⚠ t検定とWilcoxon検定（${pj(pw)}）で結論が分かれています。Shapiro-Wilkとヒストグラムで分布の偏りを確認し、偏りがあればWilcoxonを優先してください。</div>`;
+    else if (pw !== null)
+      extra = `<div>Wilcoxon検定（${pj(pw)}）も同じ結論であり、結果は分布の仮定に対して頑健です。</div>`;
+    return card(p < 0.05,
+      h0(`${escHtml(kv.g1)} と ${escHtml(kv.g2)} の母平均は等しい（2群に差はない）`) +
+      judge(p, `「2群の平均には統計学的に有意な差がある」と判断できます。${dir}`, NS_NOTE) + extra +
+      `<div style="opacity:.85">※ 有意かどうかと差の大きさ（臨床的な意味）は別です。平均差と95%信頼区間も併せて確認・報告しましょう。</div>`);
+  },
+  paired: kv => {
+    const p = Pn(kv.p_t); if (p === null) return '';
+    const pw = Pn(kv.p_w), md = Pn(kv.mdiff), psh = Pn(kv.p_sh);
+    const dir = md !== null ? `平均で ${g4(Math.abs(md))} ${md > 0 ? '増加' : '減少'}しています。` : '';
+    let pref = '';
+    if (psh !== null && psh < 0.05)
+      pref = `<div>⚠ 差の分布が正規分布から外れている可能性があるため（Shapiro-Wilk ${pj(psh)}）、<b>Wilcoxon符号付き順位検定（${pw !== null ? pj(pw) : '—'}）の結果を主に採用</b>することをお勧めします。</div>`;
+    return card(p < 0.05,
+      h0('前後で母平均に変化はない（差の平均 = 0）') +
+      judge(p, `「前後で値は統計学的に有意に変化した」と判断できます。${dir}`, NS_NOTE) + pref);
+  },
+  multi: kv => {
+    const p = Pn(kv.p_anova); if (p === null) return '';
+    const pkw = Pn(kv.p_kw), k = Pn(kv.k), ns = Pn(kv.nsig);
+    let tukey = '';
+    if (p < 0.05) tukey = ns > 0
+      ? `<div>Tukey HSDでは <b>${ns}組のペア</b>が有意（p adj &lt; 0.05）でした。どのペアかは上の表で確認してください。</div>`
+      : `<div>ただしTukey HSDで有意なペアはありませんでした（全体としては差があるが、特定のペアまでは絞れない状態です）。</div>`;
+    let kwn = '';
+    if (pkw !== null && ((p < 0.05) !== (pkw < 0.05)))
+      kwn = `<div>⚠ ANOVAとKruskal-Wallis（${pj(pkw)}）で結論が分かれています。分布が偏っている場合はKruskal-Wallisを優先してください。</div>`;
+    return card(p < 0.05,
+      h0(`${k ?? ''}群すべての母平均は等しい`) +
+      judge(p, '「少なくともどこか1組の群間に差がある」と判断できます（どの群間かはANOVA単独では分かりません）。', NS_NOTE) + tukey + kwn);
+  },
+  cat: kv => {
+    const pc = Pn(kv.p_chi), pf = Pn(kv.p_fisher), me = Pn(kv.minexp);
+    if (pc === null) return '';
+    const useF = me !== null && me < 5 && pf !== null;
+    const p = useF ? pf : pc;
+    const which = useF
+      ? `<div>期待度数の最小値が ${g4(kv.minexp)}（&lt; 5）なので、χ²検定よりも<b>Fisher正確検定の結果（${pj(pf)}）を採用</b>します。</div>`
+      : `<div>期待度数はすべて十分大きいため、χ²検定の結果で問題ありません。</div>`;
+    return card(p < 0.05,
+      h0('2つの変数は独立である（関連がない）') + which +
+      judge(p, '「2つの変数には統計学的に有意な関連がある」と判断できます。どの組み合わせが多いかは行%で確認しましょう。',
+        '関連があるという十分な証拠は得られませんでした。' ) +
+      `<div style="opacity:.85">※ 関連がある＝因果関係がある、ではありません。</div>`);
+  },
+  mcnemar: kv => {
+    const pex = Pn(kv.p_ex), pc = Pn(kv.p);
+    const p = pex !== null ? pex : pc;
+    if (p === null) return '';
+    let dir = '';
+    const a12 = Pn(kv.a12), a21 = Pn(kv.a21);
+    if (a12 !== null && a21 !== null && kv.l1 && kv.l2){
+      dir = `<div>変化の内訳: 「${escHtml(kv.l1)}→${escHtml(kv.l2)}」が ${a12}人、「${escHtml(kv.l2)}→${escHtml(kv.l1)}」が ${a21}人。${a12 === a21 ? '両方向が同数です。' : `<b>${a12 > a21 ? escHtml(kv.l1)+'→'+escHtml(kv.l2) : escHtml(kv.l2)+'→'+escHtml(kv.l1)}</b> 方向への変化が優勢です。`}</div>`;
+    }
+    const note = pex !== null ? `<div>不一致ペアが少ないため、二項検定（正確法）のp値で判定しています。</div>` : '';
+    return card(p < 0.05,
+      h0('前後で割合は変化していない（両方向の変化が同じ頻度で起こる）') +
+      judge(p, '「前後で割合は統計学的に有意に変化した」と判断できます。', NS_NOTE) + dir + note);
+  },
+  cor: kv => {
+    const r = Pn(kv.r), pp = Pn(kv.p_p), rho = Pn(kv.rho), ps = Pn(kv.p_s);
+    if (r === null || pp === null) return '';
+    const ar = Math.abs(r);
+    const strength = ar < 0.2 ? 'ごく弱い' : ar < 0.4 ? '弱い' : ar < 0.7 ? '中等度の' : '強い';
+    const dir = r > 0 ? '正（一方が大きいほど他方も大きい）' : '負（一方が大きいほど他方は小さい）';
+    let sp = '';
+    if (rho !== null && ps !== null && ((pp < 0.05) !== (ps < 0.05)))
+      sp = `<div>⚠ PearsonとSpearman（ρ = ${g4(kv.rho)}, ${pj(ps)}）で結論が分かれています。散布図で外れ値や曲線的な関係がないか確認してください。</div>`;
+    return card(pp < 0.05,
+      h0('2つの変数に相関はない（母相関係数 ρ = 0）') +
+      judge(pp, `「相関がある」と判断できます。r = ${g4(kv.r)} は<b>${strength}${dir}の相関</b>です。`, '相関があるという十分な証拠は得られませんでした。') + sp +
+      `<div style="opacity:.85">※ 相関は因果関係を意味しません。外れ値の影響も散布図で必ず確認を。</div>`);
+  },
+  surv: kv => {
+    const plr = Pn(kv.p_logrank);
+    if (plr === null) return '';
+    let hrtxt = '';
+    const hr = Pn(kv.hr), lo = Pn(kv.lo), hi = Pn(kv.hi);
+    if (hr !== null && lo !== null && hi !== null && kv.ref && kv.cmp){
+      const pct = Math.abs(Math.round((1 - hr) * 100));
+      const sigHR = !(lo <= 1 && hi >= 1);
+      hrtxt = `<div><b>ハザード比:</b> ${escHtml(kv.cmp)} は ${escHtml(kv.ref)} に対して HR = ${g4(kv.hr)}（95%CI ${g4(kv.lo)}–${g4(kv.hi)}）。`
+        + (hr < 1 ? `イベントの起きやすさが約 <b>${pct}% 低い</b>` : `イベントの起きやすさが約 <b>${Math.round((hr-1)*100)}% 高い</b>`)
+        + `という推定です。95%CIが1を${sigHR ? '<b>またいでいない</b>ため、統計学的に有意です' : '<b>またいでいる</b>ため、有意とは言えません'}。</div>`;
+    }
+    let zph = '';
+    const pz = Pn(kv.p_zph);
+    if (pz !== null && pz < 0.05)
+      zph = `<div>⚠ 比例ハザード性の検定が ${pj(pz)} で有意です。「HRが時間を通じて一定」というCoxモデルの前提が成り立っていない可能性があります（KM曲線の交差を確認し、解釈は慎重に）。</div>`;
+    return card(plr < 0.05,
+      h0('群間で生存曲線（イベントの起きやすさ）に差はない') +
+      judge(plr, '「群間で生存に統計学的に有意な差がある」と判断できます（log-rank検定）。', NS_NOTE) + hrtxt + zph);
+  },
+  roc: kv => {
+    const auc = Pn(kv.auc), lo = Pn(kv.lo), hi = Pn(kv.hi);
+    if (auc === null) return '';
+    const grade = auc < 0.6 ? 'ほとんど判別できない' : auc < 0.7 ? '判別能は限定的' : auc < 0.8 ? '許容範囲の判別能' : auc < 0.9 ? '良好な判別能' : '非常に良好な判別能';
+    const sig = lo !== null && lo > 0.5;
+    let cut = '';
+    if (kv.thr !== undefined && kv.sens && kv.spec)
+      cut = `<div><b>カットオフ:</b> ${g4(kv.thr)} で区切ると感度 ${Math.round(Pn(kv.sens)*100)}% / 特異度 ${Math.round(Pn(kv.spec)*100)}%（感度＋特異度が最大になる点）。見逃しを減らしたいスクリーニング用途なら感度の高い別のカットオフを、確定診断用途なら特異度の高いカットオフを検討してください。</div>`;
+    return card(sig,
+      `<div><b>AUC = ${g4(kv.auc)}</b>（95%CI ${g4(kv.lo)}–${g4(kv.hi)}）→ <b>${grade}</b>です（0.5 = 偶然と同じ、1.0 = 完全判別）。</div>` +
+      `<div>${sig
+        ? '95%CIの下限が0.5を超えているので、「偶然以上の判別能がある」と統計学的に言えます。'
+        : '95%CIが0.5を含んでいるため、「偶然以上の判別能がある」とまでは言えません。'}</div>` + cut +
+      `<div style="opacity:.85">※ 同じデータで決めたカットオフは性能を過大評価しがちです。可能なら別データで検証を。</div>`);
+  },
 };
 
 const ANALYSES = [
@@ -540,6 +716,11 @@ const ANALYSES = [
     opts:[ {key:'welch', label:'Welch補正（等分散を仮定しない・推奨）', def:true},
            {key:'wilcox', label:'Wilcoxon順位和検定も実施', def:true} ],
     plot:true },
+  { id:'paired', label:'対応のある比較', desc:'同一対象の前後測定など、対応のある連続値の比較。対応のあるt検定とWilcoxon符号付き順位検定を行います。',
+    fields:[
+      {key:'a', label:'変数 1（前）', kind:'single', filter:'num'},
+      {key:'b', label:'変数 2（後）', kind:'single', filter:'num'},
+    ], plot:true },
   { id:'multi', label:'多群比較', desc:'3群以上の連続変数の比較。一元配置ANOVA＋Tukey HSD、およびKruskal-Wallis検定を実施します。',
     fields:[
       {key:'y', label:'アウトカム（連続変数）', kind:'single', filter:'num'},
@@ -560,6 +741,7 @@ const ANALYSES = [
       {key:'time', label:'時間変数（追跡期間）', kind:'single', filter:'num'},
       {key:'event', label:'イベント変数（0/1 または 2水準）', kind:'single', filter:'all'},
       {key:'g', label:'群分け変数（任意・未選択なら全体のKM曲線）', kind:'single', filter:'all'},
+      {key:'covs', label:'Cox回帰の調整共変量（任意・複数選択可）', kind:'multi', filter:'all'},
     ], plot:true },
   { id:'cor', label:'相関', desc:'2つの連続変数の相関（Pearson / Spearman）と散布図。',
     fields:[
@@ -576,6 +758,20 @@ const ANALYSES = [
       {key:'y', label:'目的変数（2値）', kind:'single', filter:'all'},
       {key:'x', label:'説明変数（複数選択可）', kind:'multi', filter:'all'},
     ], plot:false },
+  { id:'roc', label:'ROC曲線', desc:'連続値の検査・マーカーが2値アウトカムをどれだけ判別できるかを評価。AUC（95%CI）と最適カットオフ（Youden index）・感度・特異度を算出します。',
+    fields:[
+      {key:'y', label:'アウトカム（2値）', kind:'single', filter:'all'},
+      {key:'x', label:'検査値・マーカー（連続変数）', kind:'single', filter:'num'},
+    ], plot:true },
+  { id:'synth', label:'🎲 ダミーデータ生成', desc:'生成AI（ChatGPT等）に安全に渡すための偽データCSVを作ります。各列の型・分布（数値は平均/SD、カテゴリは出現比率）・欠損率を保ったまま中身を完全に入れ替えるので、実データの値は1つも残りません。生成後にダウンロードボタンが出ます。',
+    fields:[
+      {key:'g', label:'群構造を保つ変数（任意・選ぶと群ごとの分布差を再現）', kind:'single', filter:'all'},
+    ],
+    opts:[
+      {key:'idnum', label:'ID列（ほぼ全行が一意な列）は連番に置換する', def:true},
+      {key:'corr', label:'数値変数どうしの相関も再現する（多変量正規近似）', def:false},
+    ],
+    plot:false },
 ];
 
 let currentTab = null;
@@ -737,6 +933,7 @@ for (v in vars) {
 }
 out <- as.data.frame(do.call(rbind, rows), check.names = FALSE)
 print(out, row.names = FALSE, right = FALSE)
+cat("@@TSV_BEGIN\\n"); write.table(out, sep = "\\t", row.names = FALSE, quote = FALSE); cat("@@TSV_END\\n")
 cat("\\n注: 数値変数 = ", if (np) "中央値 [IQR]、検定は Wilcoxon / Kruskal-Wallis" else "平均 (SD)、検定は Welch t / ANOVA",
     "。カテゴリ変数 = n (%)、検定は Chisq（期待度数<5のセルがあれば Fisher）。\\n", sep = "")
 `;
@@ -762,6 +959,7 @@ for (v in vars) {
 }
 out <- as.data.frame(do.call(rbind, rows), check.names = FALSE)
 print(out, row.names = FALSE, right = FALSE)
+cat("@@TSV_BEGIN\\n"); write.table(out, sep = "\\t", row.names = FALSE, quote = FALSE); cat("@@TSV_END\\n")
 `;
     }
     return {code};
@@ -785,9 +983,13 @@ for (lv in levels(g)) {
   }
 }
 cat("\\n等分散性（F検定）:\\n"); print(var.test(y ~ g))
-cat("\\nt検定:\\n"); print(t.test(y ~ g, var.equal = ${opt('welch') ? 'FALSE' : 'TRUE'}))
+cat("\\nt検定:\\n"); tt <- t.test(y ~ g, var.equal = ${opt('welch') ? 'FALSE' : 'TRUE'}); print(tt)
+m <- tapply(y, g, mean)
+cat(sprintf("@@KV p_t=%.6g\\n@@KV g1=%s\\n@@KV g2=%s\\n@@KV m1=%.6g\\n@@KV m2=%.6g\\n", tt$p.value, levels(g)[1], levels(g)[2], m[1], m[2]))
 `;
-    if (opt('wilcox')) code += `cat("\\nWilcoxon順位和検定:\\n"); print(wilcox.test(y ~ g))\n`;
+    if (opt('wilcox')) code += `cat("\\nWilcoxon順位和検定:\\n"); wt <- suppressWarnings(wilcox.test(y ~ g)); print(wt)
+cat(sprintf("@@KV p_w=%.6g\\n", wt$p.value))
+`;
     code += `boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "${escR(y)}", col = c("#9FC4E8", "#F2C9A0"))\n`;
     return {code};
   }
@@ -802,9 +1004,11 @@ ok <- complete.cases(y, g); y <- y[ok]; g <- droplevels(g[ok])
 cat(sprintf("群数: %d\\n群別の要約:\\n", nlevels(g)))
 print(tapply(y, g, function(v) c(n = length(v), mean = mean(v), sd = sd(v))))
 cat("\\n一元配置ANOVA:\\n")
-fit <- aov(y ~ g); print(summary(fit))
-cat("\\nTukey HSD（多重比較）:\\n"); print(TukeyHSD(fit))
-cat("\\nKruskal-Wallis検定:\\n"); print(kruskal.test(y ~ g))
+fit <- aov(y ~ g); sm <- summary(fit); print(sm)
+cat("\\nTukey HSD（多重比較）:\\n"); tk <- TukeyHSD(fit); print(tk)
+cat("\\nKruskal-Wallis検定:\\n"); kw <- kruskal.test(y ~ g); print(kw)
+cat(sprintf("@@KV p_anova=%.6g\\n@@KV p_kw=%.6g\\n@@KV k=%d\\n@@KV nsig=%d\\n",
+  sm[[1]][["Pr(>F)"]][1], kw$p.value, nlevels(g), sum(tk$g[, "p adj"] < 0.05)))
 boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "${escR(y)}", col = "#9FC4E8")
 `};
   }
@@ -816,11 +1020,13 @@ boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "$
 `tab <- table(${col(A)}, ${col(B)})
 cat("クロス集計表:\\n"); print(tab)
 cat("\\n行%:\\n"); print(round(prop.table(tab, 1) * 100, 1))
-cat("\\nχ²検定:\\n"); print(chisq.test(tab))
-cat("期待度数:\\n"); print(round(chisq.test(tab)$expected, 2))
+cat("\\nχ²検定:\\n"); ct <- suppressWarnings(chisq.test(tab)); print(ct)
+cat("期待度数:\\n"); print(round(ct$expected, 2))
 fis <- try(fisher.test(tab), silent = TRUE)
-if (!inherits(fis, "try-error")) { cat("\\nFisher正確検定:\\n"); print(fis) } else
+if (!inherits(fis, "try-error")) { cat("\\nFisher正確検定:\\n"); print(fis)
+  cat(sprintf("@@KV p_fisher=%.6g\\n", fis$p.value)) } else
   cat("\\nFisher正確検定: 表が大きいため省略しました\\n")
+cat(sprintf("@@KV p_chi=%.6g\\n@@KV minexp=%.4g\\n", ct$p.value, min(ct$expected)))
 mosaicplot(tab, main = "${escR(A)} × ${escR(B)}", color = c("#9FC4E8","#F2C9A0","#BFD8B8","#D8B8D8","#E8D49F"))
 `};
   }
@@ -840,26 +1046,48 @@ cat(sprintf("対応のあるペア数: n = %d\\n\\nクロス集計表:\\n", sum(
 print(tab)
 cat("\\n不一致ペア（検定に効くのはこの非対角セルです）:\\n")
 print(tab * (1 - diag(nrow(tab))))
-cat("\\nMcNemar検定（連続性補正あり）:\\n"); print(mcnemar.test(tab))
+cat("\\nMcNemar検定（連続性補正あり）:\\n"); mc <- mcnemar.test(tab); print(mc)
 cat("McNemar検定（補正なし）:\\n"); print(mcnemar.test(tab, correct = FALSE))
+cat(sprintf("@@KV p=%.6g\\n", mc$p.value))
 if (nrow(tab) == 2) {
+  cat(sprintf("@@KV l1=%s\\n@@KV l2=%s\\n@@KV a12=%d\\n@@KV a21=%d\\n", u[1], u[2], tab[1,2], tab[2,1]))
   d <- tab[1,2] + tab[2,1]
   if (d > 0 && d <= 25) {
     cat("不一致ペアが少ないため、二項検定による正確法も表示します:\\n")
-    print(binom.test(tab[1,2], d, p = 0.5))
+    bt <- binom.test(tab[1,2], d, p = 0.5); print(bt)
+    cat(sprintf("@@KV p_ex=%.6g\\n", bt$p.value))
   }
 }
 `};
   }
 
   if (a.id === 'surv'){
-    const t = val('time'), ev = val('event'), g = val('g');
-    if (!t || !ev) return {err:'時間変数とイベント変数を選択してください'};
+    const t = val('time'), evt = val('event'), g = val('g');
+    const covs = vals('covs').filter(c => c !== t && c !== evt && c !== g);
+    if (!t || !evt) return {err:'時間変数とイベント変数を選択してください'};
+    const bq = s => '`' + s.replace(/`/g, '') + '`';
+    const FP =
+`fp <- function(m, xlab) {
+  m <- m[is.finite(m[,1]) & is.finite(m[,2]) & is.finite(m[,3]), , drop = FALSE]
+  k <- nrow(m); if (k == 0) return(invisible())
+  layout(1); par(mar = c(4, 11, 2, 2))
+  xl <- c(min(c(m, 1)) * 0.8, max(c(m, 1)) * 1.25)
+  plot(NA, xlim = xl, ylim = c(0.5, k + 0.5), log = "x", yaxt = "n",
+       xlab = xlab, ylab = "", main = "Forest plot")
+  abline(v = 1, lty = 2, col = "grey55")
+  for (i in 1:k) {
+    yy <- k - i + 1
+    segments(m[i,2], yy, m[i,3], yy, lwd = 2, col = "#276DC3")
+    points(m[i,1], yy, pch = 18, cex = 1.5, col = "#1B4F8F")
+  }
+  axis(2, at = k:1, labels = rownames(m), las = 1, cex.axis = .8)
+}
+`;
     let code =
 `if (!requireNamespace("survival", quietly = TRUE)) webr::install("survival")
 suppressMessages(library(survival))
 tm <- ${col(t)}
-e_raw <- ${col(ev)}
+e_raw <- ${col(evt)}
 if (is.numeric(e_raw)) {
   ev <- as.integer(e_raw)
   stopifnot("イベント変数は0/1にしてください" = all(ev %in% c(0L, 1L), na.rm = TRUE))
@@ -869,38 +1097,147 @@ if (is.numeric(e_raw)) {
   ev <- as.integer(f) - 1L
   cat(sprintf("イベント定義: %s = 0（打ち切り）, %s = 1（イベント発生）\\n\\n", levels(f)[1], levels(f)[2]))
 }
+d <- data.frame(.time = tm, .event = ev, check.names = FALSE)
+`;
+    if (g) code += `d[["${escR(g)}"]] <- factor(${col(g)})\n`;
+    covs.forEach(c => { code += `d[["${escR(c)}"]] <- ${col(c)}\n`; });
+    code += `d <- d[complete.cases(d), ]
+cat(sprintf("解析対象: n = %d（選択した全変数が欠損なしの症例）, イベント数 = %d\\n\\n", nrow(d), sum(d$.event)))
 `;
     if (g){
+      const rhs = [bq(g), ...covs.map(bq)].join(' + ');
       code +=
-`grp <- factor(${col(g)})
-ok <- complete.cases(tm, ev, grp); tm <- tm[ok]; ev <- ev[ok]; grp <- droplevels(grp[ok])
-fit <- survfit(Surv(tm, ev) ~ grp)
-cat("Kaplan-Meier要約（群別・中央生存期間と95%CI）:\\n")
-print(fit)
-cat("\\nLog-rank検定:\\n"); print(survdiff(Surv(tm, ev) ~ grp))
-cat("\\nCox比例ハザードモデル:\\n")
-cx <- coxph(Surv(tm, ev) ~ grp)
+`grp <- droplevels(factor(d[["${escR(g)}"]]))
+glv <- levels(grp)
+fit <- survfit(Surv(d$.time, d$.event) ~ grp)
+cat("Kaplan-Meier要約（群別・中央生存期間と95%CI）:\\n"); print(fit)
+sdf <- survdiff(Surv(d$.time, d$.event) ~ grp)
+cat("\\nLog-rank検定:\\n"); print(sdf)
+p_lr <- 1 - pchisq(sdf$chisq, length(sdf$n) - 1)
+cat("\\nCox比例ハザードモデル${covs.length ? '（共変量で調整したHR）' : ''}:\\n")
+cx <- coxph(Surv(.time, .event) ~ ${rhs}, data = d)
 print(summary(cx))
-cat("ハザード比と95%信頼区間:\\n")
-print(round(exp(cbind(HR = coef(cx), confint(cx))), 3))
-cat("\\n比例ハザード性の検定（Schoenfeld残差, p < 0.05 で仮定に疑い）:\\n")
-print(cox.zph(cx))
-cols <- c("#276DC3", "#C0392B", "#1E7F4F", "#7A4E1D", "#6C3FA0")[seq_len(nlevels(grp))]
-plot(fit, col = cols, lwd = 2, xlab = "Time", ylab = "Survival probability",
+hr <- exp(cbind(HR = coef(cx), suppressMessages(confint(cx))))
+cat("ハザード比と95%信頼区間:\\n"); print(round(hr, 3))
+zp <- cox.zph(cx)
+cat("\\n比例ハザード性の検定（Schoenfeld残差, p < 0.05 で仮定に疑い）:\\n"); print(zp)
+cat(sprintf("@@KV p_logrank=%.6g\\n@@KV p_zph=%.6g\\n", p_lr, zp$table["GLOBAL", "p"]))
+if (nlevels(grp) == 2)
+  cat(sprintf("@@KV hr=%.6g\\n@@KV lo=%.6g\\n@@KV hi=%.6g\\n@@KV ref=%s\\n@@KV cmp=%s\\n",
+    hr[1,1], hr[1,2], hr[1,3], glv[1], glv[2]))
+# --- KM曲線 + Number at risk ---
+cols <- c("#276DC3", "#C0392B", "#1E7F4F", "#7A4E1D", "#6C3FA0")[seq_along(glv)]
+tp <- pretty(c(0, max(d$.time))); tp <- tp[tp >= 0 & tp <= max(d$.time) * 1.001]
+layout(matrix(1:2, ncol = 1), heights = c(3, 1.2 + 0.25 * length(glv)))
+par(mar = c(2.5, 5.5, 2, 2))
+plot(fit, col = cols, lwd = 2, xlim = range(tp), xlab = "", ylab = "Survival probability",
      main = "Kaplan-Meier", mark.time = TRUE)
-legend("bottomleft", legend = levels(grp), col = cols, lwd = 2, bty = "n")
+legend("bottomleft", legend = glv, col = cols, lwd = 2, bty = "n", cex = .85)
+sf <- summary(fit, times = tp, extend = TRUE)
+par(mar = c(2.2, 5.5, .5, 2))
+plot.new(); plot.window(xlim = range(tp), ylim = c(0, length(glv) + 1.4))
+text(min(tp), length(glv) + 1, "Number at risk", adj = 0, font = 2, cex = .8, xpd = NA)
+st <- if (length(glv) == 1) rep(1L, length(sf$time)) else as.integer(sf$strata)
+for (i in seq_along(glv))
+  text(sf$time[st == i], length(glv) - i + 1, sf$n.risk[st == i], cex = .8, col = cols[i], xpd = NA)
+axis(2, at = length(glv):1, labels = glv, las = 1, tick = FALSE, cex.axis = .75)
+axis(1, at = tp, cex.axis = .7)
+layout(1)
 `;
+      if (covs.length) code += FP + `fp(hr, "Hazard ratio (log scale)")\n`;
     } else {
       code +=
-`ok <- complete.cases(tm, ev); tm <- tm[ok]; ev <- ev[ok]
-fit <- survfit(Surv(tm, ev) ~ 1)
-cat("Kaplan-Meier要約（中央生存期間と95%CI）:\\n")
-print(fit)
-plot(fit, col = "#276DC3", lwd = 2, conf.int = TRUE, mark.time = TRUE,
-     xlab = "Time", ylab = "Survival probability", main = "Kaplan-Meier")
+`fit <- survfit(Surv(d$.time, d$.event) ~ 1)
+cat("Kaplan-Meier要約（中央生存期間と95%CI）:\\n"); print(fit)
+tp <- pretty(c(0, max(d$.time))); tp <- tp[tp >= 0 & tp <= max(d$.time) * 1.001]
+layout(matrix(1:2, ncol = 1), heights = c(3, 1.3))
+par(mar = c(2.5, 5.5, 2, 2))
+plot(fit, col = "#276DC3", lwd = 2, conf.int = TRUE, mark.time = TRUE, xlim = range(tp),
+     xlab = "", ylab = "Survival probability", main = "Kaplan-Meier")
+sf <- summary(fit, times = tp, extend = TRUE)
+par(mar = c(2.2, 5.5, .5, 2))
+plot.new(); plot.window(xlim = range(tp), ylim = c(0, 2.4))
+text(min(tp), 2, "Number at risk", adj = 0, font = 2, cex = .8, xpd = NA)
+text(sf$time, 1, sf$n.risk, cex = .8, col = "#276DC3", xpd = NA)
+axis(1, at = tp, cex.axis = .7)
+layout(1)
 `;
+      if (covs.length){
+        const rhs2 = covs.map(bq).join(' + ');
+        code +=
+`cat("\\nCox比例ハザードモデル:\\n")
+cx <- coxph(Surv(.time, .event) ~ ${rhs2}, data = d)
+print(summary(cx))
+hr <- exp(cbind(HR = coef(cx), suppressMessages(confint(cx))))
+cat("ハザード比と95%信頼区間:\\n"); print(round(hr, 3))
+cat("\\n比例ハザード性の検定:\\n"); print(cox.zph(cx))
+` + FP + `fp(hr, "Hazard ratio (log scale)")\n`;
+      }
     }
     return {code};
+  }
+
+  if (a.id === 'paired'){
+    const A = val('a'), B = val('b');
+    if (!A || !B) return {err:'前後の2変数を選択してください'};
+    if (A === B) return {err:'異なる変数を2つ選択してください'};
+    return {code:
+`x1 <- ${col(A)}  # 前
+x2 <- ${col(B)}  # 後
+ok <- complete.cases(x1, x2); x1 <- x1[ok]; x2 <- x2[ok]
+d <- x2 - x1
+cat(sprintf("ペア数 n = %d\\n前:   平均 %.4g (SD %.4g)\\n後:   平均 %.4g (SD %.4g)\\n差（後−前）: 平均 %.4g (SD %.4g)\\n",
+  length(d), mean(x1), sd(x1), mean(x2), sd(x2), mean(d), sd(d)))
+if (length(d) >= 3 && length(d) <= 5000) {
+  s <- shapiro.test(d)
+  cat(sprintf("\\n差のShapiro-Wilk正規性検定: W = %.3f, p = %.4g\\n", s$statistic, s$p.value))
+  cat(sprintf("@@KV p_sh=%.6g\\n", s$p.value))
+}
+cat("\\n対応のあるt検定:\\n"); tt <- t.test(x2, x1, paired = TRUE); print(tt)
+cat("\\nWilcoxon符号付き順位検定:\\n"); wt <- suppressWarnings(wilcox.test(x2, x1, paired = TRUE)); print(wt)
+cat(sprintf("@@KV p_t=%.6g\\n@@KV p_w=%.6g\\n@@KV mdiff=%.6g\\n@@KV n=%d\\n", tt$p.value, wt$p.value, mean(d), length(d)))
+boxplot(list(Before = x1, After = x2), col = c("#9FC4E8", "#F2C9A0"), main = "Before / After")
+hist(d, main = "Difference (After - Before)", xlab = "difference", col = "#9FC4E8", border = "white")
+abline(v = 0, lty = 2, lwd = 2, col = "#C0392B")
+`};
+  }
+
+  if (a.id === 'roc'){
+    const y = val('y'), x = val('x');
+    if (!y || !x) return {err:'アウトカムと検査値を選択してください'};
+    return {code:
+`outc_raw <- ${col(y)}
+pred <- ${col(x)}
+f <- factor(outc_raw)
+ok <- complete.cases(pred, f); pred <- pred[ok]; f <- droplevels(f[ok])
+stopifnot("アウトカムは2値にしてください" = nlevels(f) == 2)
+outc <- as.integer(f) - 1L
+n1 <- sum(outc == 1); n0 <- sum(outc == 0)
+cat(sprintf("陽性（イベント）の定義: %s = 1（n = %d）, %s = 0（n = %d）\\n\\n", levels(f)[2], n1, levels(f)[1], n0))
+w <- suppressWarnings(wilcox.test(pred[outc == 1], pred[outc == 0]))
+auc <- as.numeric(w$statistic) / (n1 * n0)
+flip <- FALSE
+if (auc < 0.5) { flip <- TRUE; pred <- -pred; auc <- 1 - auc
+  cat("注: 検査値が低いほど陽性の傾向だったため、向きを反転して解析しました。\\n\\n") }
+q1 <- auc / (2 - auc); q2 <- 2 * auc^2 / (1 + auc)
+se <- sqrt((auc * (1 - auc) + (n1 - 1) * (q1 - auc^2) + (n0 - 1) * (q2 - auc^2)) / (n1 * n0))
+lo <- max(0, auc - 1.96 * se); hi <- min(1, auc + 1.96 * se)
+cat(sprintf("AUC = %.3f（95%%CI: %.3f–%.3f, Hanley-McNeil法）\\n\\n", auc, lo, hi))
+th <- sort(unique(pred))
+sens <- sapply(th, function(t) mean(pred[outc == 1] >= t))
+spec <- sapply(th, function(t) mean(pred[outc == 0] < t))
+bi <- which.max(sens + spec - 1)
+bt <- if (flip) -th[bi] else th[bi]
+cat(sprintf("最適カットオフ（Youden index）: %.4g %s\\n  感度 = %.1f%%, 特異度 = %.1f%%\\n",
+  bt, if (flip) "（この値以下を陽性と判定）" else "（この値以上を陽性と判定）", 100 * sens[bi], 100 * spec[bi]))
+cat(sprintf("@@KV auc=%.6g\\n@@KV lo=%.6g\\n@@KV hi=%.6g\\n@@KV thr=%.6g\\n@@KV sens=%.4g\\n@@KV spec=%.4g\\n",
+  auc, lo, hi, bt, sens[bi], spec[bi]))
+o <- order(1 - spec, sens)
+plot(c(0, (1 - spec)[o], 1), c(0, sens[o], 1), type = "l", lwd = 2, col = "#276DC3",
+     xlab = "1 - Specificity", ylab = "Sensitivity", main = sprintf("ROC curve (AUC = %.3f)", auc))
+abline(0, 1, lty = 2, col = "grey60")
+points(1 - spec[bi], sens[bi], pch = 19, cex = 1.2, col = "#C0392B")
+`};
   }
 
   if (a.id === 'cor'){
@@ -910,9 +1247,11 @@ plot(fit, col = "#276DC3", lwd = 2, conf.int = TRUE, mark.time = TRUE,
 `x <- ${col(x)}; y <- ${col(y)}
 ok <- complete.cases(x, y); x <- x[ok]; y <- y[ok]
 cat(sprintf("n = %d\\n\\nPearson相関:\\n", length(x)))
-print(cor.test(x, y, method = "pearson"))
+pe <- cor.test(x, y, method = "pearson"); print(pe)
 cat("\\nSpearman相関:\\n")
-print(cor.test(x, y, method = "spearman"))
+sp <- suppressWarnings(cor.test(x, y, method = "spearman")); print(sp)
+cat(sprintf("@@KV r=%.6g\\n@@KV p_p=%.6g\\n@@KV rho=%.6g\\n@@KV p_s=%.6g\\n@@KV n=%d\\n",
+  pe$estimate, pe$p.value, sp$estimate, sp$p.value, length(x)))
 plot(x, y, xlab = "${escR(x)}", ylab = "${escR(y)}", pch = 19, col = "#276DC3AA",
      main = sprintf("r = %.3f", cor(x, y)))
 abline(lm(y ~ x), col = "#C0392B", lwd = 2)
@@ -940,18 +1279,152 @@ df$.outcome <- as.integer(yv) - 1L
 cat(sprintf("アウトカム: %s=0, %s=1\\n\\n", levels(yv)[1], levels(yv)[2]))
 fit <- glm(.outcome ~ ${rhs}, data = df, family = binomial)
 print(summary(fit))
-or <- exp(cbind(OR = coef(fit), confint(fit)))
+or <- exp(cbind(OR = coef(fit), suppressMessages(confint(fit))))
 cat("\\nオッズ比と95%信頼区間:\\n"); print(round(or, 3))
 cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
+fp <- function(m, xlab) {
+  m <- m[is.finite(m[,1]) & is.finite(m[,2]) & is.finite(m[,3]), , drop = FALSE]
+  k <- nrow(m); if (k == 0) return(invisible())
+  layout(1); par(mar = c(4, 11, 2, 2))
+  xl <- c(min(c(m, 1)) * 0.8, max(c(m, 1)) * 1.25)
+  plot(NA, xlim = xl, ylim = c(0.5, k + 0.5), log = "x", yaxt = "n",
+       xlab = xlab, ylab = "", main = "Forest plot")
+  abline(v = 1, lty = 2, col = "grey55")
+  for (i in 1:k) {
+    yy <- k - i + 1
+    segments(m[i,2], yy, m[i,3], yy, lwd = 2, col = "#276DC3")
+    points(m[i,1], yy, pch = 18, cex = 1.5, col = "#1B4F8F")
+  }
+  axis(2, at = k:1, labels = rownames(m), las = 1, cex.axis = .8)
+}
+if (nrow(or) > 1) fp(or[-1, , drop = FALSE], "Odds ratio (log scale)")
 `};
   }
+
+  if (a.id === 'synth'){
+    const g = val('g');
+    const idFlag = opt('idnum') ? 'TRUE' : 'FALSE';
+    const corrFlag = opt('corr') ? 'TRUE' : 'FALSE';
+    return {code:
+`## ===== ダミーデータ生成（実データの値は出力されません） =====
+set.seed(NULL)               # 毎回異なる乱数
+n <- nrow(df)
+use_id   <- ${idFlag}
+use_corr <- ${corrFlag}
+${g ? `grp_name <- "${escR(g)}"` : `grp_name <- NA`}
+
+# 群構造を保つ場合の行インデックス（群ごとに分布を学習）
+if (!is.na(grp_name) && grp_name %in% names(df)) {
+  gv <- as.character(df[[grp_name]])
+  groups <- split(seq_len(n), gv)
+} else {
+  groups <- list(all = seq_len(n))
+}
+
+is_id_col <- function(x) {
+  ux <- length(unique(x[!is.na(x)]))
+  use_id && ux >= 0.9 * sum(!is.na(x)) && ux > 20
+}
+
+# 1つの列を、与えられた行集合ごとに合成
+synth_col <- function(x) {
+  if (is_id_col(x)) return(NULL)  # ID列は後で連番に
+  out <- rep(NA, n)
+  for (idx in groups) {
+    xi <- x[idx]
+    miss_rate <- mean(is.na(xi))
+    obs <- xi[!is.na(xi)]
+    if (length(obs) == 0) { out[idx] <- NA; next }
+    if (is.numeric(x)) {
+      m <- mean(obs); s <- sd(obs); if (is.na(s) || s == 0) s <- abs(m) * 0.05 + 1e-6
+      sim <- rnorm(length(idx), m, s)
+      # 整数列なら丸め、元の範囲にクリップ
+      if (all(obs == round(obs))) sim <- round(sim)
+      sim <- pmin(pmax(sim, min(obs)), max(obs))
+      sim <- round(sim, 4)
+    } else {
+      lv <- names(table(obs)); pr <- as.numeric(table(obs)); pr <- pr / sum(pr)
+      sim <- sample(lv, length(idx), replace = TRUE, prob = pr)
+    }
+    # 欠損率を再現
+    if (miss_rate > 0) sim[runif(length(idx)) < miss_rate] <- NA
+    out[idx] <- sim
+  }
+  if (!is.numeric(x)) out <- as.character(out)
+  out
+}
+
+fake <- as.data.frame(lapply(names(df), function(nm) {
+  col <- synth_col(df[[nm]])
+  if (is.null(col)) seq_len(n) else col
+}), stringsAsFactors = FALSE, check.names = FALSE)
+names(fake) <- names(df)
+
+# ID列の連番化（接頭辞は元の最頻パターンを真似て "ID000x"）
+for (nm in names(df)) {
+  if (is_id_col(df[[nm]])) {
+    w <- max(3, nchar(as.character(n)))
+    fake[[nm]] <- sprintf(paste0("ID%0", w, "d"), seq_len(n))
+  }
+}
+
+# （任意）数値列の相関を多変量正規で再現
+if (use_corr) {
+  numv <- names(df)[sapply(df, is.numeric) & !sapply(df, is_id_col)]
+  if (length(numv) >= 2) {
+    cc <- complete.cases(df[, numv]); M <- as.matrix(df[cc, numv, drop = FALSE])
+    if (nrow(M) > length(numv) + 1) {
+      mu <- colMeans(M); S <- cov(M)
+      L <- tryCatch(chol(S + diag(1e-8, ncol(S))), error = function(e) NULL)
+      if (!is.null(L)) {
+        Z <- matrix(rnorm(n * length(numv)), n, length(numv))
+        sim <- Z %*% L + matrix(mu, n, length(numv), byrow = TRUE)
+        for (j in seq_along(numv)) {
+          v <- df[[numv[j]]]; ov <- v[!is.na(v)]
+          s <- sim[, j]
+          if (all(ov == round(ov))) s <- round(s)
+          s <- pmin(pmax(s, min(ov)), max(ov))
+          keep <- !is.na(fake[[numv[j]]])          # 既存の欠損パターンは維持
+          fake[[numv[j]]][keep] <- round(s, 4)[keep]
+        }
+        cat("数値変数の相関も再現しました: ", paste(numv, collapse = ", "), "\\n")
+      }
+    }
+  }
+}
+
+cat(sprintf("ダミーデータを生成しました: %d 行 × %d 列\\n（実データの値は含まれていません）\\n\\nプレビュー（先頭6行）:\\n", nrow(fake), ncol(fake)))
+print(utils::head(fake, 6))
+
+cat("\\n--- 分布が保たれているか（実データ vs ダミー）---\\n")
+for (nm in names(df)) {
+  if (is_id_col(df[[nm]])) next
+  if (is.numeric(df[[nm]])) {
+    cat(sprintf("%s: 実 平均%.3g/SD%.3g → 偽 平均%.3g/SD%.3g\\n", nm,
+      mean(df[[nm]], na.rm=TRUE), sd(df[[nm]], na.rm=TRUE),
+      mean(fake[[nm]], na.rm=TRUE), sd(fake[[nm]], na.rm=TRUE)))
+  } else {
+    rt <- round(prop.table(table(df[[nm]]))*100); ft <- round(prop.table(table(fake[[nm]]))*100)
+    cat(sprintf("%s: 実 %s → 偽 %s\\n", nm,
+      paste(names(rt), rt, sep="=", collapse=" "), paste(names(ft), ft, sep="=", collapse=" ")))
+  }
+}
+
+# CSVテキストをマーカーで囲んで書き出し（UI側がダウンロード化）
+tc <- textConnection("csvout", "w", local = TRUE)
+write.csv(fake, tc, row.names = FALSE, na = "")
+close(tc)
+cat("@@CSV_BEGIN\\n"); cat(paste(csvout, collapse = "\\n")); cat("\\n@@CSV_END\\n")
+`};
+  }
+
   return {err:'unknown'};
 }
 
 /* =========================================================
    Run on WebR
 ========================================================= */
-async function runR(code, container){
+async function runR(code, container, analysisId){
   container.innerHTML = `
     <div class="rcode"><div class="bar"><span># 実行したRコード</span><button data-copy>コピー</button></div><pre>${escHtml(code)}</pre></div>
     <div class="rout">実行中… <span style="opacity:.5">（パッケージ読込で時間がかかる場合があります）</span></div>`;
@@ -967,24 +1440,112 @@ async function runR(code, container){
       withAutoprint: true,
       captureStreams: true,
       captureConditions: true,
-      captureGraphics: canPlot ? { width: 520, height: 380, pointsize: 12 } : false,
+      captureGraphics: canPlot ? { width: 520, height: 420, pointsize: 12 } : false,
     });
-    let html = '';
+
+    // ---- parse output: hide @@KV / @@TSV markers, collect them ----
+    let html = '', kv = {}, tsv = null, inTsv = false; const tsvLines = [];
+    let csv = null, inCsv = false; const csvLines = [];
+    const handleLine = (line, cls) => {
+      if (line.startsWith('@@KV ')){
+        const m = line.slice(5), i = m.indexOf('=');
+        if (i > 0) kv[m.slice(0, i).trim()] = m.slice(i + 1).trim();
+        return;
+      }
+      if (line.startsWith('@@CSV_BEGIN')){ inCsv = true; return; }
+      if (line.startsWith('@@CSV_END')){ inCsv = false; csv = csvLines.join('\n'); return; }
+      if (inCsv){ csvLines.push(line); return; }
+      if (line.startsWith('@@TSV_BEGIN')){ inTsv = true; return; }
+      if (line.startsWith('@@TSV_END')){ inTsv = false; tsv = tsvLines.join('\n'); return; }
+      if (inTsv){ tsvLines.push(line); return; }
+      html += cls ? `<span class="${cls}">${escHtml(line)}</span>\n` : escHtml(line) + '\n';
+    };
+    const toText = (v) => {
+      if (v == null) return '';
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object'){
+        // R condition objects: prefer .message, else try common fields
+        if (typeof v.message === 'string') return v.message;
+        if (Array.isArray(v.message)) return v.message.join('');
+        try { return String(v.message ?? v.data ?? ''); } catch(e){ return ''; }
+      }
+      try { return String(v); } catch(e){ return ''; }
+    };
     for (const o of result.output){
-      if (o.type === 'stdout') html += escHtml(o.data) + '\n';
-      else if (o.type === 'stderr') html += `<span class="stderr">${escHtml(o.data)}</span>\n`;
-      else if (o.type === 'message' || o.type === 'warning') html += `<span class="stderr">${escHtml(o.data?.message ?? String(o.data))}</span>\n`;
+      let data, cls = '';
+      if (o.type === 'stdout') data = toText(o.data);
+      else if (o.type === 'stderr'){ data = toText(o.data); cls = 'stderr'; }
+      else if (o.type === 'message' || o.type === 'warning' || o.type === 'error'){
+        data = toText(o.data); cls = 'stderr';
+      } else {
+        data = toText(o.data); cls = 'stderr';
+      }
+      if (data) data.split('\n').forEach(l => handleLine(l, cls));
     }
     outEl.innerHTML = html || '(出力なし)';
+
+    // ---- copy toolbar ----
+    const bar = document.createElement('div');
+    bar.className = 'outbar';
+    let barHtml = `<button class="minibtn" data-copyout>📋 出力をコピー</button>`;
+    if (tsv) barHtml += `<button class="minibtn" data-copytsv>📋 表をコピー（Excel / Word 貼り付け用）</button>`;
+    if (csv) barHtml += `<button class="minibtn" data-dlcsv style="border-color:var(--r-blue);color:var(--r-blue);font-weight:500">⬇ ダミーCSVをダウンロード</button>`
+      + `<button class="minibtn" data-copycsv>📋 ダミーCSVをコピー（AIに貼り付け用）</button>`;
+    bar.innerHTML = barHtml;
+    outEl.parentNode.insertBefore(bar, outEl);
+    bar.querySelector('[data-copyout]').onclick = e => {
+      navigator.clipboard.writeText(outEl.textContent);
+      e.target.textContent = '✓ コピーしました'; setTimeout(()=>e.target.textContent='📋 出力をコピー',1500);
+    };
+    if (tsv) bar.querySelector('[data-copytsv]').onclick = e => {
+      navigator.clipboard.writeText(tsv);
+      e.target.textContent = '✓ コピーしました（Excelにそのまま貼れます）';
+      setTimeout(()=>e.target.textContent='📋 表をコピー（Excel / Word 貼り付け用）',2000);
+    };
+    if (csv){
+      bar.querySelector('[data-dlcsv]').onclick = () => {
+        const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'dummy_data.csv';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      };
+      bar.querySelector('[data-copycsv]').onclick = e => {
+        navigator.clipboard.writeText(csv);
+        e.target.textContent = '✓ コピーしました'; setTimeout(()=>e.target.textContent='📋 ダミーCSVをコピー（AIに貼り付け用）',1500);
+      };
+    }
+
+    // ---- dynamic interpretation card ----
+    if (analysisId && INTERPRET[analysisId]){
+      try {
+        const cardHtml = INTERPRET[analysisId](kv);
+        if (cardHtml) outEl.insertAdjacentHTML('afterend', cardHtml);
+      } catch(e){ console.warn('interpret error', e); }
+    }
+
+    // ---- plots with PNG download ----
     if (result.images && result.images.length){
       const grid = document.createElement('div');
       grid.className = 'plotgrid';
-      for (const img of result.images){
+      result.images.forEach((img, idx) => {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;flex-direction:column;gap:.35rem;align-items:flex-start';
         const cv = document.createElement('canvas');
         cv.width = img.width; cv.height = img.height;
         cv.getContext('2d').drawImage(img, 0, 0);
-        grid.appendChild(cv);
-      }
+        const dl = document.createElement('button');
+        dl.className = 'minibtn'; dl.textContent = '⬇ PNG保存';
+        dl.onclick = () => cv.toBlob(b => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(b);
+          a.download = `plot_${idx + 1}.png`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        });
+        wrap.appendChild(cv); wrap.appendChild(dl); grid.appendChild(wrap);
+      });
       container.appendChild(grid);
     }
   } catch (e){
@@ -1003,7 +1564,7 @@ async function runAnalysis(){
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 実行中…';
   document.getElementById('codeNote').hidden = false;
-  await runR(code, res);
+  await runR(code, res, a.id);
   btn.disabled = false; btn.innerHTML = '<span class="play">▶</span> Rで解析を実行';
 }
 
