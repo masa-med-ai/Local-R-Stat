@@ -1,0 +1,1032 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local R Stat Lab — ブラウザ完結のR統計解析</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+JP:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F7F8F6;
+  --panel:#FFFFFF;
+  --ink:#1B2A33;
+  --ink-soft:#5A6B75;
+  --line:#DDE3E0;
+  --r-blue:#276DC3;
+  --r-blue-dark:#1B4F8F;
+  --console-bg:#10212B;
+  --console-fg:#D7E3EA;
+  --ok:#1E7F4F;
+  --warn:#B3541E;
+  --err:#C0392B;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans JP",-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{font-size:15px}
+body{font-family:var(--sans);background:var(--paper);color:var(--ink);line-height:1.65}
+button{font-family:inherit;cursor:pointer}
+select,input[type=text]{font-family:inherit;font-size:.95rem}
+
+/* ---------- header ---------- */
+header{
+  background:var(--console-bg);color:var(--console-fg);
+  padding:.9rem 1.4rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;
+}
+header .logo{font-family:var(--mono);font-weight:500;font-size:1.05rem;letter-spacing:.02em}
+header .logo .gt{color:var(--r-blue);font-weight:700}
+header .sub{font-size:.78rem;opacity:.7}
+.status{
+  margin-left:auto;font-family:var(--mono);font-size:.78rem;
+  padding:.3rem .8rem;border-radius:999px;border:1px solid rgba(255,255,255,.25);
+  display:flex;align-items:center;gap:.45rem;
+}
+.status .dot{width:8px;height:8px;border-radius:50%;background:#E0A800;animation:pulse 1.2s infinite}
+.status.ready .dot{background:#3DDC84;animation:none}
+.status.error .dot{background:#FF6B5E;animation:none}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.privacy{
+  background:#EAF2EC;border-bottom:1px solid var(--line);
+  font-size:.8rem;color:#23513A;padding:.45rem 1.4rem;
+}
+.privacy strong{font-weight:700}
+
+/* ---------- layout ---------- */
+main{max-width:1180px;margin:0 auto;padding:1.4rem;display:grid;grid-template-columns:330px 1fr;gap:1.4rem;align-items:start}
+@media(max-width:880px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.panel h2{
+  font-size:.78rem;font-weight:700;letter-spacing:.08em;color:var(--ink-soft);
+  padding:.7rem 1rem;border-bottom:1px solid var(--line);background:#FBFCFA;
+  font-family:var(--mono);text-transform:uppercase;
+}
+.panel .body{padding:1rem}
+
+/* ---------- data panel ---------- */
+.dropzone{
+  border:2px dashed #B9C4BE;border-radius:8px;padding:1.6rem 1rem;text-align:center;
+  color:var(--ink-soft);font-size:.88rem;transition:border-color .15s,background .15s;
+}
+.dropzone.drag{border-color:var(--r-blue);background:#F0F6FD}
+.dropzone .big{font-size:1rem;color:var(--ink);font-weight:500;margin-bottom:.3rem}
+.dropzone button{
+  margin-top:.7rem;background:var(--r-blue);color:#fff;border:none;border-radius:6px;
+  padding:.5rem 1.1rem;font-size:.88rem;font-weight:500;
+}
+.dropzone button:hover{background:var(--r-blue-dark)}
+.enc-row{margin-top:.8rem;font-size:.78rem;color:var(--ink-soft);display:flex;gap:.4rem;justify-content:center;align-items:center}
+.datameta{font-size:.82rem;color:var(--ink-soft);margin-bottom:.7rem;display:flex;gap:1rem;flex-wrap:wrap}
+.datameta b{color:var(--ink);font-family:var(--mono)}
+.varlist{display:flex;flex-direction:column;gap:.3rem;max-height:300px;overflow:auto}
+.varitem{
+  display:flex;align-items:center;gap:.5rem;font-size:.82rem;
+  padding:.32rem .5rem;border:1px solid var(--line);border-radius:6px;background:#FCFDFB;
+}
+.varitem .name{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.badge{font-family:var(--mono);font-size:.66rem;padding:.1rem .42rem;border-radius:4px;font-weight:500;flex-shrink:0}
+.badge.num{background:#E3EDFA;color:var(--r-blue-dark)}
+.badge.cat{background:#F3E9DC;color:#7A4E1D}
+.previewwrap{overflow:auto;max-height:220px;margin-top:.8rem;border:1px solid var(--line);border-radius:6px}
+table.preview{border-collapse:collapse;font-size:.74rem;font-family:var(--mono);width:100%}
+table.preview th,table.preview td{padding:.28rem .55rem;border-bottom:1px solid #EEF1EF;white-space:nowrap;text-align:left}
+table.preview th{background:#F3F6F4;position:sticky;top:0}
+.replace-btn{margin-top:.8rem;width:100%;background:#fff;border:1px solid var(--line);border-radius:6px;padding:.45rem;font-size:.82rem;color:var(--ink-soft)}
+.replace-btn:hover{border-color:var(--r-blue);color:var(--r-blue)}
+
+/* ---------- analysis ---------- */
+.tabs{display:flex;flex-wrap:wrap;gap:.4rem;padding:.8rem 1rem 0}
+.tab{
+  border:1px solid var(--line);background:#fff;border-radius:999px;
+  padding:.38rem .9rem;font-size:.84rem;color:var(--ink-soft);
+}
+.tab:hover{border-color:var(--r-blue);color:var(--r-blue)}
+.tab.active{background:var(--r-blue);border-color:var(--r-blue);color:#fff;font-weight:500}
+.config{padding:1rem;display:flex;flex-direction:column;gap:.8rem}
+.config .desc{font-size:.82rem;color:var(--ink-soft)}
+.field{display:flex;flex-direction:column;gap:.25rem}
+.field label{font-size:.78rem;font-weight:500;color:var(--ink-soft)}
+.field select{
+  padding:.45rem .6rem;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);
+}
+.field select[multiple]{min-height:6.5rem}
+.field .hint{font-size:.72rem;color:#8A989F}
+.helpbtn{align-self:flex-start;background:#fff;border:1px solid #CCDEF3;border-radius:999px;padding:.3rem .9rem;font-size:.78rem;color:var(--r-blue)}
+.helpbtn:hover{border-color:var(--r-blue);background:#F4F8FD}
+.helpbox{background:#F4F8FD;border:1px solid #CCDEF3;border-radius:8px;padding:.9rem 1.1rem;font-size:.84rem;line-height:1.85;color:#21455F}
+.helpbox h4{font-size:.82rem;margin:.7rem 0 .15rem;color:var(--r-blue-dark)}
+.helpbox h4:first-child{margin-top:0}
+.helpbox ul{padding-left:1.25rem;margin:.1rem 0}
+.helpbox b{color:#163A56}
+.optrow{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.84rem}
+.optrow label{display:flex;align-items:center;gap:.35rem}
+.runbtn{
+  align-self:flex-start;background:var(--ink);color:#fff;border:none;border-radius:6px;
+  padding:.55rem 1.5rem;font-size:.92rem;font-weight:500;display:flex;align-items:center;gap:.5rem;
+}
+.runbtn:hover{background:#000}
+.runbtn:disabled{background:#9AA7AD;cursor:not-allowed}
+.runbtn .play{font-family:var(--mono)}
+
+/* ---------- results ---------- */
+.results{display:flex;flex-direction:column;gap:1rem;padding:0 1rem 1rem}
+.rcode{
+  background:var(--console-bg);border-radius:8px;overflow:hidden;
+}
+.rcode .bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:.4rem .8rem;font-family:var(--mono);font-size:.72rem;color:#8FA8B5;
+  border-bottom:1px solid rgba(255,255,255,.08);
+}
+.rcode .bar button{
+  background:transparent;border:1px solid rgba(255,255,255,.25);color:#B9CCD6;
+  border-radius:4px;padding:.12rem .6rem;font-size:.7rem;font-family:var(--mono);
+}
+.rcode .bar button:hover{border-color:#fff;color:#fff}
+.rcode pre{
+  font-family:var(--mono);font-size:.78rem;line-height:1.55;color:#9FD0FF;
+  padding:.8rem 1rem;overflow:auto;max-height:260px;white-space:pre;
+}
+.rout{
+  background:#FCFDFB;border:1px solid var(--line);border-radius:8px;
+  font-family:var(--mono);font-size:.8rem;line-height:1.55;
+  padding:.9rem 1rem;overflow:auto;white-space:pre;max-height:480px;
+}
+.rout .stderr{color:var(--err)}
+.plotgrid{display:flex;flex-wrap:wrap;gap:1rem}
+.plotgrid canvas{
+  border:1px solid var(--line);border-radius:8px;background:#fff;
+  max-width:100%;height:auto;
+}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:rot .7s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+.note{font-size:.78rem;color:var(--ink-soft);padding:0 1rem 1rem}
+
+/* ---------- free console ---------- */
+.console-panel textarea{
+  width:100%;font-family:var(--mono);font-size:.82rem;line-height:1.55;
+  background:var(--console-bg);color:var(--console-fg);border:none;outline:none;
+  padding:.9rem 1rem;min-height:110px;resize:vertical;
+}
+.console-panel .toolbar{
+  display:flex;align-items:center;gap:.7rem;padding:.6rem 1rem;background:#FBFCFA;border-top:1px solid var(--line);
+}
+.console-panel .toolbar .hint{font-size:.74rem;color:var(--ink-soft)}
+footer{max-width:1180px;margin:0 auto;padding:0 1.4rem 2rem;font-size:.74rem;color:#8A989F}
+footer a{color:var(--r-blue)}
+.placeholder{padding:2.5rem 1rem;text-align:center;color:#9AA7AD;font-size:.88rem}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo"><span class="gt">&gt;</span> Local R Stat Lab</div>
+    <div class="sub">CSVを読み込み、本物のRエンジン（WebR）でブラウザ内統計解析</div>
+  </div>
+  <div class="status" id="status"><span class="dot"></span><span id="statusText">Rエンジンを起動中…（初回は1〜2分かかることがあります）</span></div>
+</header>
+<div class="privacy">🔒 <strong>データはこのブラウザの中だけで処理されます。</strong>CSVの内容がネットワークに送信されることはありません（初回のRエンジン読込のみ通信が発生します）。</div>
+
+<main>
+  <!-- ===== left: data ===== -->
+  <div style="display:flex;flex-direction:column;gap:1.4rem">
+    <section class="panel">
+      <h2>1 · Data</h2>
+      <div class="body" id="dataBody">
+        <div class="dropzone" id="dropzone">
+          <div class="big">CSVファイルをここにドロップ</div>
+          <div>または</div>
+          <button id="pickBtn">ファイルを選択</button>
+          <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
+          <div class="enc-row">
+            文字コード:
+            <select id="encSel">
+              <option value="auto" selected>自動判定</option>
+              <option value="utf-8">UTF-8</option>
+              <option value="shift_jis">Shift_JIS</option>
+            </select>
+          </div>
+        </div>
+        <div id="dataInfo" hidden>
+          <div class="datameta">
+            <span>ファイル: <b id="metaName"></b></span>
+            <span>行: <b id="metaRows"></b></span>
+            <span>列: <b id="metaCols"></b></span>
+          </div>
+          <div class="varlist" id="varList"></div>
+          <div class="previewwrap"><table class="preview" id="previewTable"></table></div>
+          <button class="replace-btn" id="replaceBtn">別のCSVに差し替える</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== right: analysis ===== -->
+  <div style="display:flex;flex-direction:column;gap:1.4rem">
+    <section class="panel">
+      <h2>2 · Analysis</h2>
+      <div class="tabs" id="tabs"></div>
+      <div class="config" id="config"><div class="placeholder">まずCSVを読み込んでください</div></div>
+      <div class="results" id="results"></div>
+      <div class="note" id="codeNote" hidden>▲ 実行したRコードは上の黒いボックスに表示されます。コピーして手元のRでもそのまま再現できます。</div>
+    </section>
+
+    <section class="panel console-panel">
+      <h2>3 · R Console（自由入力）</h2>
+      <textarea id="freeCode" spellcheck="false" placeholder="# 読み込んだデータは df で参照できます
+# 例: summary(df) / table(df[[&quot;性別&quot;]]) / lm(y ~ x, data = df)"></textarea>
+      <div class="toolbar">
+        <button class="runbtn" id="freeRun" disabled><span class="play">▶</span> 実行</button>
+        <span class="hint">Ctrl+Enter（⌘+Enter）でも実行できます</span>
+      </div>
+      <div class="results" id="freeResults" style="padding-top:1rem"></div>
+    </section>
+
+    <footer>
+      Powered by <a href="https://docs.r-wasm.org/webr/latest/" target="_blank" rel="noopener">WebR</a>（R を WebAssembly 化したオープンソースプロジェクト）。
+      解析結果は研究判断の参考情報であり、最終的な統計判断は統計家にご確認ください。
+    </footer>
+  </div>
+</main>
+
+<script type="module">
+/* =========================================================
+   WebR bootstrap
+========================================================= */
+const statusEl = document.getElementById('status');
+const statusText = document.getElementById('statusText');
+let webR = null, ready = false;
+
+function setStatus(cls, text){
+  statusEl.className = 'status ' + cls;
+  statusText.textContent = text;
+}
+
+(async () => {
+  try {
+    const { WebR } = await import('https://webr.r-wasm.org/latest/webr.mjs');
+    webR = new WebR();
+    await webR.init();
+    const v = await webR.evalRString('paste(R.version$major, R.version$minor, sep=".")');
+    ready = true;
+    setStatus('ready', 'R ' + v + ' 準備完了');
+    document.getElementById('freeRun').disabled = false;
+    refreshRunButtons();
+  } catch (e) {
+    console.error(e);
+    setStatus('error', 'R起動に失敗。ネット接続を確認しページを再読込してください');
+  }
+})();
+
+/* =========================================================
+   CSV loading (fully local)
+========================================================= */
+let dataLoaded = false;
+let columns = [];          // [{name, type:'num'|'cat', nLevels}]
+let csvTextCache = '';
+let nRows = 0;
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+document.getElementById('pickBtn').onclick = () => fileInput.click();
+document.getElementById('replaceBtn').onclick = () => fileInput.click();
+fileInput.onchange = () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); };
+
+['dragover','dragenter'].forEach(ev => dropzone.addEventListener(ev, e => {
+  e.preventDefault(); dropzone.classList.add('drag');
+}));
+['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => {
+  e.preventDefault(); dropzone.classList.remove('drag');
+}));
+dropzone.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+function decodeBuffer(buf){
+  const mode = document.getElementById('encSel').value;
+  if (mode === 'utf-8') return new TextDecoder('utf-8').decode(buf);
+  if (mode === 'shift_jis') return new TextDecoder('shift_jis').decode(buf);
+  // auto: try UTF-8, fall back to Shift_JIS if replacement chars appear
+  const utf8 = new TextDecoder('utf-8', {fatal:false}).decode(buf);
+  if (utf8.includes('\uFFFD')) {
+    try { return new TextDecoder('shift_jis').decode(buf); } catch(e){ return utf8; }
+  }
+  return utf8;
+}
+
+// minimal CSV parser (quotes-aware) — for preview/typing only; R does real parsing
+function parseCSV(text){
+  const rows = []; let row = [], cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (inQ){
+      if (c === '"'){ if (text[i+1] === '"'){ cur += '"'; i++; } else inQ = false; }
+      else cur += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+      else if (c === '\r') { /* skip */ }
+      else cur += c;
+    }
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter(r => !(r.length === 1 && r[0].trim() === ''));
+}
+
+async function loadFile(file){
+  const buf = await file.arrayBuffer();
+  const text = decodeBuffer(buf).replace(/^\uFEFF/, '');
+  const rows = parseCSV(text);
+  if (rows.length < 2){ alert('データ行が見つかりません。ヘッダー行＋データ行のCSVを指定してください。'); return; }
+
+  const header = rows[0].map((h,i) => h.trim() || ('V' + (i+1)));
+  const body = rows.slice(1);
+  nRows = body.length;
+
+  // type detection
+  columns = header.map((name, ci) => {
+    let numeric = 0, nonEmpty = 0; const levels = new Set();
+    for (const r of body){
+      const v = (r[ci] ?? '').trim();
+      if (v === '' || v === 'NA') continue;
+      nonEmpty++;
+      levels.add(v);
+      if (/^[-+]?\d*\.?\d+([eE][-+]?\d+)?$/.test(v)) numeric++;
+    }
+    const isNum = nonEmpty > 0 && numeric / nonEmpty > 0.9 && levels.size > 5;
+    const isNumStrict = nonEmpty > 0 && numeric / nonEmpty > 0.9;
+    return { name, type: isNumStrict ? (levels.size <= 5 ? 'num-few' : 'num') : 'cat', nLevels: levels.size };
+  });
+  // num-few: numeric but few levels (could be group codes) — treat as numeric, but offer in group selects too
+  columns.forEach(c => { if (c.type === 'num-few') c.type = 'num'; });
+
+  csvTextCache = text;
+  // push into R virtual FS
+  if (ready){
+    await writeDataToR();
+  } else {
+    const waiter = setInterval(async () => {
+      if (ready){ clearInterval(waiter); await writeDataToR(); }
+    }, 500);
+  }
+
+  // render meta
+  document.getElementById('dataInfo').hidden = false;
+  dropzone.hidden = true;
+  document.getElementById('metaName').textContent = file.name;
+  document.getElementById('metaRows').textContent = nRows.toLocaleString();
+  document.getElementById('metaCols').textContent = columns.length;
+
+  const vl = document.getElementById('varList');
+  vl.innerHTML = '';
+  columns.forEach(c => {
+    const d = document.createElement('div');
+    d.className = 'varitem';
+    d.innerHTML = `<span class="name" title="${escHtml(c.name)}">${escHtml(c.name)}</span>
+      <span class="badge ${c.type === 'num' ? 'num' : 'cat'}">${c.type === 'num' ? '数値' : 'カテゴリ'}</span>
+      <span style="font-size:.68rem;color:#8A989F">${c.nLevels}水準</span>`;
+    vl.appendChild(d);
+  });
+
+  // preview (first 8 rows)
+  const tbl = document.getElementById('previewTable');
+  tbl.innerHTML = '<tr>' + header.map(h => `<th>${escHtml(h)}</th>`).join('') + '</tr>' +
+    body.slice(0, 8).map(r => '<tr>' + header.map((_,i) => `<td>${escHtml(r[i] ?? '')}</td>`).join('') + '</tr>').join('');
+
+  dataLoaded = true;
+  renderTabs();
+  selectTab(currentTab || 'desc');
+}
+
+async function writeDataToR(){
+  const enc = new TextEncoder().encode(csvTextCache);
+  await webR.FS.writeFile('/tmp/data.csv', enc);
+  await webR.evalRVoid(`df <- read.csv('/tmp/data.csv', check.names = FALSE, fileEncoding = 'UTF-8')`);
+}
+
+function escHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function escR(s){ return String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"'); }
+function col(name){ return `df[["${escR(name)}"]]`; }
+
+/* =========================================================
+   Analysis definitions
+========================================================= */
+/* =========================================================
+   Beginner help (per analysis)
+========================================================= */
+const HELP = {
+desc: `
+<h4>いつ使う？</h4>解析の<b>一番最初のステップ</b>です。データの全体像（値の中心・ばらつき・欠損の数・分布の形）を把握します。いきなり検定をせず、まずここから始めるのが鉄則です。
+<h4>結果の見方</h4>
+<ul>
+<li><b>平均 (SD)</b> … 分布が左右対称（山型）のときの代表値。SD（標準偏差）はばらつきの大きさ。</li>
+<li><b>中央値 [IQR]</b> … 分布が偏っているデータ（在院日数・腫瘍マーカーなど）に適した代表値。IQRは「真ん中50%の人が入る範囲」。</li>
+<li><b>ヒストグラム</b> … 山が左右対称なら平均(SD)、片側に裾を引くなら中央値[IQR]で報告するのが目安です。</li>
+</ul>
+<h4>注意</h4>欠損数を必ず確認しましょう。極端な外れ値は入力ミス（単位違い・桁違い）の可能性もあります。`,
+
+table1: `
+<h4>いつ使う？</h4>論文の最初に載せる<b>患者背景表（Table 1）</b>を作るときに使います。EZRの「サマリー表の出力」に相当します。
+<h4>結果の見方</h4>
+<ul>
+<li>数値変数は <b>平均 (SD)</b>、カテゴリ変数は <b>n (%)</b> で要約されます。</li>
+<li>群分け変数を選ぶと群ごとの列が並び、右端に<b>群間比較のp値</b>と使った検定法が付きます（2群: t検定/Wilcoxon、3群以上: ANOVA/Kruskal-Wallis、カテゴリ: χ²/Fisher）。</li>
+<li>分布が偏った変数が多ければ「中央値 [IQR]」オプションをオンにします。</li>
+</ul>
+<h4>注意</h4>ランダム化比較試験（RCT）のベースライン表にp値を載せることは推奨されないことがあります（割付が正しければ差は偶然のはずだからです）。観察研究では群間の偏り＝交絡候補を把握するのに有用です。`,
+
+two: `
+<h4>いつ使う？</h4>「A群とB群で血圧に差があるか」のように、<b>独立した2つの群</b>で連続値（数値）を比べるときに使います。
+<h4>結果の見方</h4>
+<ul>
+<li><b>p値</b>とは「本当は差がないのに、偶然これ以上の差が出てしまう確率」。慣習的に p &lt; 0.05 で「統計学的に有意」と呼びます。</li>
+<li><b>t検定</b>は平均の差を見る検定。データが正規分布に近いことが前提です。<b>Welch補正</b>は2群のばらつきが違っても使える方法で、迷ったらWelchのままでOKです。</li>
+<li><b>Wilcoxon検定</b>は順位に基づく方法で、分布が偏っていても外れ値があっても使えます。</li>
+<li><b>Shapiro-Wilk</b>の p &lt; 0.05 は「正規分布から外れている可能性」を示すサイン。その場合はWilcoxonの結果を重視します。</li>
+</ul>
+<h4>注意</h4>pが小さい＝差が大きい、ではありません。差の大きさは平均差と95%信頼区間で判断します。また<b>同じ患者の前後比較には使えません</b>（対応のあるデータはMcNemar検定や、Rコンソールで t.test(前, 後, paired = TRUE) を使います）。`,
+
+multi: `
+<h4>いつ使う？</h4><b>3群以上</b>で連続値を比べるとき（例: ステージI/II/IIIで腫瘍マーカーを比較）。
+<h4>結果の見方</h4>
+<ul>
+<li><b>ANOVA</b>のp値は「どこかの群間に差がある」ことしか教えてくれません。</li>
+<li><b>Tukey HSD</b>が「どのペアに差があるか」を多重比較の調整付きで示します。diffが差、p adjが調整済みp値です。</li>
+<li>分布が偏っている・外れ値が多いときは<b>Kruskal-Wallis検定</b>（順位ベース）を見ます。</li>
+</ul>
+<h4>注意</h4>3群以上なのにt検定を繰り返すのはNGです（検定を繰り返すほど偶然「有意」が出やすくなる＝多重検定の問題）。`,
+
+cat: `
+<h4>いつ使う？</h4>「性別と合併症の有無に関連はあるか」のように、<b>2つのカテゴリ変数の関連</b>を調べるときに使います。
+<h4>結果の見方</h4>
+<ul>
+<li>まず<b>クロス集計表</b>と<b>行%</b>で傾向を直感的に掴みます。</li>
+<li><b>χ²（カイ二乗）検定</b>のp &lt; 0.05 なら「2つの変数は無関係とは言いにくい」という解釈です。</li>
+<li><b>期待度数</b>に5未満のセルがあるとχ²検定は不正確になります。その場合は<b>Fisher正確検定</b>の結果を採用します（迷ったらFisherで問題ありません）。</li>
+</ul>
+<h4>注意</h4>関連がある＝因果関係がある、ではありません。同一対象の前後比較にはこの検定ではなくMcNemar検定を使います。`,
+
+mcnemar: `
+<h4>いつ使う？</h4><b>同じ対象を2回測った（対応のある）</b>カテゴリデータ専用です。例: 同じ患者で「治療前の症状あり/なし」と「治療後の症状あり/なし」の割合が変わったか。
+<h4>結果の見方</h4>
+<ul>
+<li>検定に効いているのは<b>「前あり→後なし」「前なし→後あり」の不一致ペアだけ</b>です。両時点とも同じだった人は変化の証拠にならないので計算に入りません。</li>
+<li>p &lt; 0.05 なら「前後で割合が変化した」と解釈します。</li>
+<li>不一致ペアが少ない（目安25組以下）場合は、近似が不正確になるため自動表示される<b>二項検定（正確法）</b>のp値を見てください。</li>
+</ul>
+<h4>注意</h4>ここで普通のχ²検定を使うと「同じ人のデータ」という情報を無視してしまい誤った結果になります。前後比較では必ずMcNemarを使いましょう。`,
+
+surv: `
+<h4>いつ使う？</h4>「イベント（死亡・再発など）が起きるまでの時間」を扱う解析です。最大の特徴は<b>打ち切り</b>（観察終了時点までイベントが起きなかった／途中で追跡できなくなった人）を正しく扱えることです。イベント=1、打ち切り=0で入力します。
+<h4>結果の見方</h4>
+<ul>
+<li><b>Kaplan-Meier曲線</b>: 縦軸は「その時点までイベントなしでいる人の割合」。階段が下がる＝イベント発生、小さな印は打ち切りです。</li>
+<li><b>中央生存期間 (median)</b>: 半数にイベントが起きるまでの時間。</li>
+<li><b>Log-rank検定</b>: 曲線全体として群間に差があるかのp値。</li>
+<li><b>ハザード比 (HR)</b>: Coxモデルの結果。HR 0.5なら「イベントの起きやすさが半分」、HR 2なら2倍。<b>95%CIが1をまたがなければ</b>有意です。</li>
+<li><b>比例ハザード性の検定</b>: p &lt; 0.05 だと「HRが時間を通じて一定」というCoxモデルの前提が怪しいサインです（KM曲線が途中で交差していないかも確認）。</li>
+</ul>
+<h4>注意</h4>追跡期間の単位（月・日・年）を揃えてください。イベント数が少ないと結果は不安定になります。`,
+
+cor: `
+<h4>いつ使う？</h4>2つの連続変数が「一方が大きいほど他方も大きい/小さい」という関係にあるかを調べます。
+<h4>結果の見方</h4>
+<ul>
+<li>相関係数 <b>r は −1〜+1</b>。+1に近いほど右上がり、−1に近いほど右下がりの関係。目安: |r| &lt; 0.2 ほぼ相関なし / 0.2〜0.4 弱い / 0.4〜0.7 中等度 / 0.7以上 強い（分野により基準は異なります）。</li>
+<li><b>Pearson</b>は直線関係を仮定、<b>Spearman</b>は順位ベースで外れ値や曲線的な関係に頑健。2つの結果が大きく違うときは散布図を確認しましょう。</li>
+</ul>
+<h4>注意</h4><b>相関≠因果</b>です。また1〜2個の外れ値でrは大きく変わるため、必ず散布図を目で確認してください。`,
+
+lm: `
+<h4>いつ使う？</h4>連続値のアウトカム（例: 血圧）を複数の因子で説明したい・<b>他の因子の影響を調整</b>したいときに使います（重回帰分析）。
+<h4>結果の見方</h4>
+<ul>
+<li><b>Estimate（係数）</b>: 他の変数を一定としたとき、その変数が1増えるとアウトカムがどれだけ変わるか。カテゴリ変数は「基準カテゴリとの差」です。</li>
+<li><b>Pr(&gt;|t|)</b>: 各係数のp値。95%信頼区間が0をまたがなければ有意です。</li>
+<li><b>R²（決定係数）</b>: モデルがアウトカムのばらつきの何%を説明できているか。</li>
+</ul>
+<h4>注意</h4>目安として<b>説明変数1個につきサンプル10〜15例以上</b>が必要です。説明変数同士が強く相関している（多重共線性）と係数が不安定になります。`,
+
+glm: `
+<h4>いつ使う？</h4>アウトカムが<b>2値</b>（合併症あり/なし、改善あり/なし等）のとき、複数因子で調整しながら関連を調べます（多変量解析の定番）。
+<h4>結果の見方</h4>
+<ul>
+<li><b>オッズ比 (OR)</b>: 1より大きい＝そのアウトカムが起こりやすい、1より小さい＝起こりにくい。例: OR 2.0は「オッズが2倍」。</li>
+<li><b>95%信頼区間が1をまたがなければ</b>統計学的に有意です。</li>
+<li>連続変数のORは「その変数が1単位増えるごと」の値です（年齢なら1歳ごと）。</li>
+</ul>
+<h4>注意</h4>ORはリスク比とは別物で、アウトカムの頻度が高い（10%超）と乖離します。目安として<b>イベント数が説明変数1個につき10件以上</b>（EPV≥10）ないと結果は不安定です。`,
+};
+
+const ANALYSES = [
+  { id:'desc', label:'記述統計', desc:'選択した変数の要約統計量（平均・SD・中央値・四分位・欠損数など）を出します。',
+    fields:[ {key:'vars', label:'変数（複数選択可）', kind:'multi', filter:'all'} ],
+    plot:true },
+  { id:'table1', label:'Table 1（背景表）', desc:'論文用の患者背景表（Table 1）をEZR風に自動生成します。数値変数は平均(SD)または中央値[IQR]、カテゴリ変数はn(%)で要約。群分け変数を選ぶと群間比較のp値が付きます。',
+    fields:[
+      {key:'vars', label:'含める変数（初期状態で全変数を選択済み）', kind:'multi', filter:'all', selectAll:true},
+      {key:'g', label:'群分け変数（任意・選ぶと群別の列とp値が付きます）', kind:'single', filter:'all'},
+    ],
+    opts:[ {key:'np', label:'数値変数を中央値 [IQR] で表示（ノンパラメトリック検定を使用）', def:false} ],
+    plot:false },
+  { id:'two', label:'2群比較', desc:'連続変数を2群間で比較します。正規性（Shapiro-Wilk）・等分散性（F検定）も併せて確認します。',
+    fields:[
+      {key:'y', label:'アウトカム（連続変数）', kind:'single', filter:'num'},
+      {key:'g', label:'群分け変数（2水準）', kind:'single', filter:'all'},
+    ],
+    opts:[ {key:'welch', label:'Welch補正（等分散を仮定しない・推奨）', def:true},
+           {key:'wilcox', label:'Wilcoxon順位和検定も実施', def:true} ],
+    plot:true },
+  { id:'multi', label:'多群比較', desc:'3群以上の連続変数の比較。一元配置ANOVA＋Tukey HSD、およびKruskal-Wallis検定を実施します。',
+    fields:[
+      {key:'y', label:'アウトカム（連続変数）', kind:'single', filter:'num'},
+      {key:'g', label:'群分け変数（3水準以上）', kind:'single', filter:'all'},
+    ], plot:true },
+  { id:'cat', label:'分割表の検定', desc:'2つのカテゴリ変数のクロス集計と χ²検定・Fisher正確検定を行います。',
+    fields:[
+      {key:'a', label:'変数 1（行）', kind:'single', filter:'all'},
+      {key:'b', label:'変数 2（列）', kind:'single', filter:'all'},
+    ], plot:true },
+  { id:'mcnemar', label:'McNemar検定', desc:'対応のある2つのカテゴリ変数（治療前後の反応など、同一対象の2時点比較）のMcNemar検定を行います。',
+    fields:[
+      {key:'a', label:'変数 1（前）', kind:'single', filter:'all'},
+      {key:'b', label:'変数 2（後）', kind:'single', filter:'all'},
+    ], plot:false },
+  { id:'surv', label:'生存分析', desc:'Kaplan-Meier曲線・log-rank検定・Cox比例ハザードモデル（HRと95%CI、比例ハザード性検定付き）。初回実行時にsurvivalパッケージを自動ダウンロードします（データは送信されません）。',
+    fields:[
+      {key:'time', label:'時間変数（追跡期間）', kind:'single', filter:'num'},
+      {key:'event', label:'イベント変数（0/1 または 2水準）', kind:'single', filter:'all'},
+      {key:'g', label:'群分け変数（任意・未選択なら全体のKM曲線）', kind:'single', filter:'all'},
+    ], plot:true },
+  { id:'cor', label:'相関', desc:'2つの連続変数の相関（Pearson / Spearman）と散布図。',
+    fields:[
+      {key:'x', label:'変数 X', kind:'single', filter:'num'},
+      {key:'y', label:'変数 Y', kind:'single', filter:'num'},
+    ], plot:true },
+  { id:'lm', label:'線形回帰', desc:'重回帰分析（lm）。係数・95%信頼区間・決定係数を出力します。',
+    fields:[
+      {key:'y', label:'目的変数（連続変数）', kind:'single', filter:'num'},
+      {key:'x', label:'説明変数（複数選択可）', kind:'multi', filter:'all'},
+    ], plot:false },
+  { id:'glm', label:'ロジスティック回帰', desc:'2値アウトカムのロジスティック回帰（glm, binomial）。オッズ比と95%CIを出力します。',
+    fields:[
+      {key:'y', label:'目的変数（2値）', kind:'single', filter:'all'},
+      {key:'x', label:'説明変数（複数選択可）', kind:'multi', filter:'all'},
+    ], plot:false },
+];
+
+let currentTab = null;
+
+function renderTabs(){
+  const t = document.getElementById('tabs');
+  t.innerHTML = '';
+  ANALYSES.forEach(a => {
+    const b = document.createElement('button');
+    b.className = 'tab' + (a.id === currentTab ? ' active' : '');
+    b.textContent = a.label;
+    b.onclick = () => selectTab(a.id);
+    t.appendChild(b);
+  });
+}
+
+function optionList(filter){
+  return columns.filter(c => filter === 'all' || c.type === filter);
+}
+
+function selectTab(id){
+  currentTab = id;
+  renderTabs();
+  const a = ANALYSES.find(x => x.id === id);
+  const cfg = document.getElementById('config');
+  if (!dataLoaded){ cfg.innerHTML = '<div class="placeholder">まずCSVを読み込んでください</div>'; return; }
+  let html = `<div class="desc">${a.desc}</div>`;
+  if (HELP[a.id]){
+    html += `<button class="helpbtn" id="helpBtn" type="button">？ はじめての方へ — この解析の使い方と読み方</button>
+      <div class="helpbox" id="helpBox" hidden>${HELP[a.id]}</div>`;
+  }
+  a.fields.forEach(f => {
+    const opts = optionList(f.filter).map(c => `<option value="${escHtml(c.name)}" ${f.selectAll ? 'selected' : ''}>${escHtml(c.name)}</option>`).join('');
+    html += `<div class="field">
+      <label>${f.label}</label>
+      <select id="f_${f.key}" ${f.kind === 'multi' ? 'multiple' : ''}>${f.kind === 'single' ? '<option value="">— 選択 —</option>' : ''}${opts}</select>
+      ${f.kind === 'multi' ? '<span class="hint">Ctrl/⌘クリックで複数選択</span>' : ''}
+    </div>`;
+  });
+  if (a.opts){
+    html += '<div class="optrow">' + a.opts.map(o =>
+      `<label><input type="checkbox" id="o_${o.key}" ${o.def ? 'checked' : ''}>${o.label}</label>`).join('') + '</div>';
+  }
+  html += `<button class="runbtn" id="runBtn" ${ready ? '' : 'disabled'}><span class="play">▶</span> Rで解析を実行</button>`;
+  cfg.innerHTML = html;
+  const hb = document.getElementById('helpBtn');
+  if (hb) hb.onclick = () => {
+    const box = document.getElementById('helpBox');
+    box.hidden = !box.hidden;
+    hb.textContent = box.hidden ? '？ はじめての方へ — この解析の使い方と読み方' : '× ヘルプを閉じる';
+  };
+  document.getElementById('runBtn').onclick = runAnalysis;
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('codeNote').hidden = true;
+}
+
+function refreshRunButtons(){
+  const b = document.getElementById('runBtn');
+  if (b && dataLoaded) b.disabled = false;
+}
+
+/* =========================================================
+   R code generation
+========================================================= */
+function genCode(a){
+  const val = k => document.getElementById('f_' + k)?.value || '';
+  const vals = k => Array.from(document.getElementById('f_' + k)?.selectedOptions || []).map(o => o.value);
+  const opt = k => document.getElementById('o_' + k)?.checked;
+
+  if (a.id === 'desc'){
+    const vs = vals('vars');
+    if (!vs.length) return {err:'変数を1つ以上選択してください'};
+    let code = '';
+    vs.forEach(v => {
+      const c = columns.find(x => x.name === v);
+      code += `cat("\\n===== ${escR(v)} =====\\n")\n`;
+      if (c.type === 'num'){
+        code += `x <- ${col(v)}\n` +
+`cat(sprintf("n = %d, 欠損 = %d\\n", sum(!is.na(x)), sum(is.na(x))))\n` +
+`cat(sprintf("平均 = %.4g, SD = %.4g\\n", mean(x, na.rm=TRUE), sd(x, na.rm=TRUE)))\n` +
+`cat(sprintf("中央値 = %.4g [IQR %.4g–%.4g], 範囲 %.4g–%.4g\\n",
+  median(x, na.rm=TRUE), quantile(x, .25, na.rm=TRUE), quantile(x, .75, na.rm=TRUE),
+  min(x, na.rm=TRUE), max(x, na.rm=TRUE)))\n` +
+`hist(x, main = "${escR(v)}", xlab = "${escR(v)}", col = "#9FC4E8", border = "white")\n`;
+      } else {
+        code += `print(table(${col(v)}, useNA = "ifany"))\n` +
+`print(round(prop.table(table(${col(v)})) * 100, 1))\n`;
+      }
+    });
+    return {code};
+  }
+
+  if (a.id === 'table1'){
+    const g = val('g');
+    let vs = vals('vars').filter(v => v !== g);
+    if (!vs.length) return {err:'変数を1つ以上選択してください'};
+    const varVec = 'c(' + vs.map(v => `"${escR(v)}"`).join(', ') + ')';
+    let code =
+`vars <- ${varVec}
+np <- ${opt('np') ? 'TRUE' : 'FALSE'}   # TRUE: 中央値[IQR] + ノンパラ検定
+fmt_p <- function(p) if (is.na(p)) "" else if (p < 0.001) "<0.001" else sprintf("%.3f", p)
+fmt_num <- function(z) {
+  z <- z[!is.na(z)]
+  if (length(z) == 0) return("-")
+  if (np) sprintf("%.4g [%.4g, %.4g]", median(z), quantile(z, .25), quantile(z, .75))
+  else    sprintf("%.4g (%.4g)", mean(z), sd(z))
+}
+`;
+    if (g){
+      code +=
+`grp <- droplevels(factor(${col(g)}))
+glv <- levels(grp)
+cols <- c("Overall", glv)
+blank <- setNames(rep("", length(cols)), cols)
+rows <- list()
+add <- function(label, vals = blank, p = "", test = "")
+  rows[[length(rows) + 1]] <<- c("変数" = label, vals, "p値" = p, "検定" = test)
+
+add("n", setNames(as.character(c(nrow(df), as.integer(table(grp)[glv]))), cols))
+
+for (v in vars) {
+  x <- df[[v]]
+  if (is.numeric(x)) {
+    vals <- setNames(c(fmt_num(x), sapply(glv, function(l) fmt_num(x[!is.na(grp) & grp == l]))), cols)
+    ok <- !is.na(x) & !is.na(grp)
+    if (length(glv) == 2) {
+      if (np) { p <- wilcox.test(x[ok] ~ grp[ok])$p.value; ts <- "Wilcoxon" }
+      else    { p <- t.test(x[ok] ~ grp[ok])$p.value;      ts <- "Welch t" }
+    } else {
+      if (np) { p <- kruskal.test(x[ok] ~ grp[ok])$p.value; ts <- "Kruskal-Wallis" }
+      else    { p <- summary(aov(x[ok] ~ grp[ok]))[[1]][["Pr(>F)"]][1]; ts <- "ANOVA" }
+    }
+    add(paste0(v, if (np) ", 中央値 [IQR]" else ", 平均 (SD)"), vals, fmt_p(p), ts)
+  } else {
+    xf <- factor(x)
+    tab <- table(xf, grp)
+    p <- NA; ts <- ""
+    if (nrow(tab) >= 2 && ncol(tab) >= 2) {
+      ct <- suppressWarnings(chisq.test(tab))
+      if (any(ct$expected < 5) && nrow(tab) * ncol(tab) <= 20) {
+        ft <- try(fisher.test(tab, workspace = 2e6), silent = TRUE)
+        if (!inherits(ft, "try-error")) { p <- ft$p.value; ts <- "Fisher" }
+        else { p <- ct$p.value; ts <- "Chisq" }
+      } else { p <- ct$p.value; ts <- "Chisq" }
+    }
+    add(paste0(v, ", n (%)"), blank, fmt_p(p), ts)
+    n_all <- sum(!is.na(xf))
+    n_g <- table(grp[!is.na(xf)])
+    for (lv in levels(xf)) {
+      o <- sum(xf == lv, na.rm = TRUE)
+      vals <- setNames(c(sprintf("%d (%.1f)", o, 100 * o / max(n_all, 1)),
+        sapply(glv, function(l) {
+          k <- sum(xf == lv & !is.na(grp) & grp == l, na.rm = TRUE)
+          sprintf("%d (%.1f)", k, 100 * k / max(as.integer(n_g[l]), 1))
+        })), cols)
+      add(paste0("  ", lv), vals)
+    }
+  }
+}
+out <- as.data.frame(do.call(rbind, rows), check.names = FALSE)
+print(out, row.names = FALSE, right = FALSE)
+cat("\\n注: 数値変数 = ", if (np) "中央値 [IQR]、検定は Wilcoxon / Kruskal-Wallis" else "平均 (SD)、検定は Welch t / ANOVA",
+    "。カテゴリ変数 = n (%)、検定は Chisq（期待度数<5のセルがあれば Fisher）。\\n", sep = "")
+`;
+    } else {
+      code +=
+`rows <- list()
+add <- function(label, val)
+  rows[[length(rows) + 1]] <<- c("変数" = label, "Overall" = val)
+
+add("n", as.character(nrow(df)))
+for (v in vars) {
+  x <- df[[v]]
+  if (is.numeric(x)) {
+    add(paste0(v, if (np) ", 中央値 [IQR]" else ", 平均 (SD)"), fmt_num(x))
+  } else {
+    xf <- factor(x); n_all <- sum(!is.na(xf))
+    add(paste0(v, ", n (%)"), "")
+    for (lv in levels(xf)) {
+      o <- sum(xf == lv, na.rm = TRUE)
+      add(paste0("  ", lv), sprintf("%d (%.1f)", o, 100 * o / max(n_all, 1)))
+    }
+  }
+}
+out <- as.data.frame(do.call(rbind, rows), check.names = FALSE)
+print(out, row.names = FALSE, right = FALSE)
+`;
+    }
+    return {code};
+  }
+
+  if (a.id === 'two'){
+    const y = val('y'), g = val('g');
+    if (!y || !g) return {err:'アウトカムと群分け変数を選択してください'};
+    let code =
+`y <- ${col(y)}
+g <- factor(${col(g)})
+ok <- complete.cases(y, g); y <- y[ok]; g <- droplevels(g[ok])
+stopifnot("群分け変数は2水準にしてください" = nlevels(g) == 2)
+cat("群別の要約:\\n")
+print(tapply(y, g, function(v) c(n = length(v), mean = mean(v), sd = sd(v), median = median(v))))
+cat("\\nShapiro-Wilk 正規性検定（群別）:\\n")
+for (lv in levels(g)) {
+  v <- y[g == lv]
+  if (length(v) >= 3 && length(v) <= 5000) {
+    s <- shapiro.test(v); cat(sprintf("  %s: W = %.3f, p = %.4g\\n", lv, s$statistic, s$p.value))
+  }
+}
+cat("\\n等分散性（F検定）:\\n"); print(var.test(y ~ g))
+cat("\\nt検定:\\n"); print(t.test(y ~ g, var.equal = ${opt('welch') ? 'FALSE' : 'TRUE'}))
+`;
+    if (opt('wilcox')) code += `cat("\\nWilcoxon順位和検定:\\n"); print(wilcox.test(y ~ g))\n`;
+    code += `boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "${escR(y)}", col = c("#9FC4E8", "#F2C9A0"))\n`;
+    return {code};
+  }
+
+  if (a.id === 'multi'){
+    const y = val('y'), g = val('g');
+    if (!y || !g) return {err:'アウトカムと群分け変数を選択してください'};
+    return {code:
+`y <- ${col(y)}
+g <- factor(${col(g)})
+ok <- complete.cases(y, g); y <- y[ok]; g <- droplevels(g[ok])
+cat(sprintf("群数: %d\\n群別の要約:\\n", nlevels(g)))
+print(tapply(y, g, function(v) c(n = length(v), mean = mean(v), sd = sd(v))))
+cat("\\n一元配置ANOVA:\\n")
+fit <- aov(y ~ g); print(summary(fit))
+cat("\\nTukey HSD（多重比較）:\\n"); print(TukeyHSD(fit))
+cat("\\nKruskal-Wallis検定:\\n"); print(kruskal.test(y ~ g))
+boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "${escR(y)}", col = "#9FC4E8")
+`};
+  }
+
+  if (a.id === 'cat'){
+    const A = val('a'), B = val('b');
+    if (!A || !B) return {err:'変数を2つ選択してください'};
+    return {code:
+`tab <- table(${col(A)}, ${col(B)})
+cat("クロス集計表:\\n"); print(tab)
+cat("\\n行%:\\n"); print(round(prop.table(tab, 1) * 100, 1))
+cat("\\nχ²検定:\\n"); print(chisq.test(tab))
+cat("期待度数:\\n"); print(round(chisq.test(tab)$expected, 2))
+fis <- try(fisher.test(tab), silent = TRUE)
+if (!inherits(fis, "try-error")) { cat("\\nFisher正確検定:\\n"); print(fis) } else
+  cat("\\nFisher正確検定: 表が大きいため省略しました\\n")
+mosaicplot(tab, main = "${escR(A)} × ${escR(B)}", color = c("#9FC4E8","#F2C9A0","#BFD8B8","#D8B8D8","#E8D49F"))
+`};
+  }
+
+  if (a.id === 'mcnemar'){
+    const A = val('a'), B = val('b');
+    if (!A || !B) return {err:'変数を2つ選択してください'};
+    if (A === B) return {err:'異なる変数を2つ選択してください'};
+    return {code:
+`a <- ${col(A)}; b <- ${col(B)}
+ok <- complete.cases(a, b)
+u <- sort(unique(c(as.character(a[ok]), as.character(b[ok]))))
+a <- factor(as.character(a[ok]), levels = u)
+b <- factor(as.character(b[ok]), levels = u)
+tab <- table(a, b, dnn = c("${escR(A)}", "${escR(B)}"))
+cat(sprintf("対応のあるペア数: n = %d\\n\\nクロス集計表:\\n", sum(ok)))
+print(tab)
+cat("\\n不一致ペア（検定に効くのはこの非対角セルです）:\\n")
+print(tab * (1 - diag(nrow(tab))))
+cat("\\nMcNemar検定（連続性補正あり）:\\n"); print(mcnemar.test(tab))
+cat("McNemar検定（補正なし）:\\n"); print(mcnemar.test(tab, correct = FALSE))
+if (nrow(tab) == 2) {
+  d <- tab[1,2] + tab[2,1]
+  if (d > 0 && d <= 25) {
+    cat("不一致ペアが少ないため、二項検定による正確法も表示します:\\n")
+    print(binom.test(tab[1,2], d, p = 0.5))
+  }
+}
+`};
+  }
+
+  if (a.id === 'surv'){
+    const t = val('time'), ev = val('event'), g = val('g');
+    if (!t || !ev) return {err:'時間変数とイベント変数を選択してください'};
+    let code =
+`if (!requireNamespace("survival", quietly = TRUE)) webr::install("survival")
+suppressMessages(library(survival))
+tm <- ${col(t)}
+e_raw <- ${col(ev)}
+if (is.numeric(e_raw)) {
+  ev <- as.integer(e_raw)
+  stopifnot("イベント変数は0/1にしてください" = all(ev %in% c(0L, 1L), na.rm = TRUE))
+} else {
+  f <- factor(e_raw)
+  stopifnot("イベント変数は2水準にしてください" = nlevels(droplevels(f[!is.na(f)])) == 2)
+  ev <- as.integer(f) - 1L
+  cat(sprintf("イベント定義: %s = 0（打ち切り）, %s = 1（イベント発生）\\n\\n", levels(f)[1], levels(f)[2]))
+}
+`;
+    if (g){
+      code +=
+`grp <- factor(${col(g)})
+ok <- complete.cases(tm, ev, grp); tm <- tm[ok]; ev <- ev[ok]; grp <- droplevels(grp[ok])
+fit <- survfit(Surv(tm, ev) ~ grp)
+cat("Kaplan-Meier要約（群別・中央生存期間と95%CI）:\\n")
+print(fit)
+cat("\\nLog-rank検定:\\n"); print(survdiff(Surv(tm, ev) ~ grp))
+cat("\\nCox比例ハザードモデル:\\n")
+cx <- coxph(Surv(tm, ev) ~ grp)
+print(summary(cx))
+cat("ハザード比と95%信頼区間:\\n")
+print(round(exp(cbind(HR = coef(cx), confint(cx))), 3))
+cat("\\n比例ハザード性の検定（Schoenfeld残差, p < 0.05 で仮定に疑い）:\\n")
+print(cox.zph(cx))
+cols <- c("#276DC3", "#C0392B", "#1E7F4F", "#7A4E1D", "#6C3FA0")[seq_len(nlevels(grp))]
+plot(fit, col = cols, lwd = 2, xlab = "Time", ylab = "Survival probability",
+     main = "Kaplan-Meier", mark.time = TRUE)
+legend("bottomleft", legend = levels(grp), col = cols, lwd = 2, bty = "n")
+`;
+    } else {
+      code +=
+`ok <- complete.cases(tm, ev); tm <- tm[ok]; ev <- ev[ok]
+fit <- survfit(Surv(tm, ev) ~ 1)
+cat("Kaplan-Meier要約（中央生存期間と95%CI）:\\n")
+print(fit)
+plot(fit, col = "#276DC3", lwd = 2, conf.int = TRUE, mark.time = TRUE,
+     xlab = "Time", ylab = "Survival probability", main = "Kaplan-Meier")
+`;
+    }
+    return {code};
+  }
+
+  if (a.id === 'cor'){
+    const x = val('x'), y = val('y');
+    if (!x || !y) return {err:'変数XとYを選択してください'};
+    return {code:
+`x <- ${col(x)}; y <- ${col(y)}
+ok <- complete.cases(x, y); x <- x[ok]; y <- y[ok]
+cat(sprintf("n = %d\\n\\nPearson相関:\\n", length(x)))
+print(cor.test(x, y, method = "pearson"))
+cat("\\nSpearman相関:\\n")
+print(cor.test(x, y, method = "spearman"))
+plot(x, y, xlab = "${escR(x)}", ylab = "${escR(y)}", pch = 19, col = "#276DC3AA",
+     main = sprintf("r = %.3f", cor(x, y)))
+abline(lm(y ~ x), col = "#C0392B", lwd = 2)
+`};
+  }
+
+  if (a.id === 'lm' || a.id === 'glm'){
+    const y = val('y'), xs = vals('x');
+    if (!y || !xs.length) return {err:'目的変数と説明変数を選択してください'};
+    if (xs.includes(y)) return {err:'目的変数が説明変数にも含まれています'};
+    const rhs = xs.map(v => '`' + v.replace(/`/g,'') + '`').join(' + ');
+    const lhs = '`' + y.replace(/`/g,'') + '`';
+    if (a.id === 'lm'){
+      return {code:
+`fit <- lm(${lhs} ~ ${rhs}, data = df)
+print(summary(fit))
+cat("\\n95%信頼区間:\\n"); print(round(confint(fit), 4))
+cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
+`};
+    }
+    return {code:
+`yv <- factor(df[["${escR(y)}"]])
+stopifnot("目的変数は2値にしてください" = nlevels(droplevels(yv[!is.na(yv)])) == 2)
+df$.outcome <- as.integer(yv) - 1L
+cat(sprintf("アウトカム: %s=0, %s=1\\n\\n", levels(yv)[1], levels(yv)[2]))
+fit <- glm(.outcome ~ ${rhs}, data = df, family = binomial)
+print(summary(fit))
+or <- exp(cbind(OR = coef(fit), confint(fit)))
+cat("\\nオッズ比と95%信頼区間:\\n"); print(round(or, 3))
+cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
+`};
+  }
+  return {err:'unknown'};
+}
+
+/* =========================================================
+   Run on WebR
+========================================================= */
+async function runR(code, container){
+  container.innerHTML = `
+    <div class="rcode"><div class="bar"><span># 実行したRコード</span><button data-copy>コピー</button></div><pre>${escHtml(code)}</pre></div>
+    <div class="rout">実行中… <span style="opacity:.5">（パッケージ読込で時間がかかる場合があります）</span></div>`;
+  container.querySelector('[data-copy]').onclick = e => {
+    navigator.clipboard.writeText(code); e.target.textContent = '✓ コピー済'; setTimeout(()=>e.target.textContent='コピー',1500);
+  };
+  const outEl = container.querySelector('.rout');
+
+  const shelter = await new webR.Shelter();
+  try {
+    const canPlot = typeof OffscreenCanvas !== 'undefined';
+    const result = await shelter.captureR(code, {
+      withAutoprint: true,
+      captureStreams: true,
+      captureConditions: true,
+      captureGraphics: canPlot ? { width: 520, height: 380, pointsize: 12 } : false,
+    });
+    let html = '';
+    for (const o of result.output){
+      if (o.type === 'stdout') html += escHtml(o.data) + '\n';
+      else if (o.type === 'stderr') html += `<span class="stderr">${escHtml(o.data)}</span>\n`;
+      else if (o.type === 'message' || o.type === 'warning') html += `<span class="stderr">${escHtml(o.data?.message ?? String(o.data))}</span>\n`;
+    }
+    outEl.innerHTML = html || '(出力なし)';
+    if (result.images && result.images.length){
+      const grid = document.createElement('div');
+      grid.className = 'plotgrid';
+      for (const img of result.images){
+        const cv = document.createElement('canvas');
+        cv.width = img.width; cv.height = img.height;
+        cv.getContext('2d').drawImage(img, 0, 0);
+        grid.appendChild(cv);
+      }
+      container.appendChild(grid);
+    }
+  } catch (e){
+    outEl.innerHTML = `<span class="stderr">エラー: ${escHtml(e.message || String(e))}</span>`;
+  } finally {
+    shelter.purge();
+  }
+}
+
+async function runAnalysis(){
+  if (!ready || !dataLoaded) return;
+  const a = ANALYSES.find(x => x.id === currentTab);
+  const {code, err} = genCode(a);
+  const res = document.getElementById('results');
+  if (err){ res.innerHTML = `<div class="rout"><span class="stderr">${escHtml(err)}</span></div>`; return; }
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 実行中…';
+  document.getElementById('codeNote').hidden = false;
+  await runR(code, res);
+  btn.disabled = false; btn.innerHTML = '<span class="play">▶</span> Rで解析を実行';
+}
+
+/* =========================================================
+   Free console
+========================================================= */
+const freeBtn = document.getElementById('freeRun');
+const freeCode = document.getElementById('freeCode');
+freeBtn.onclick = runFree;
+freeCode.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); runFree(); }
+});
+async function runFree(){
+  if (!ready) return;
+  const code = freeCode.value.trim();
+  if (!code) return;
+  freeBtn.disabled = true; freeBtn.innerHTML = '<span class="spin"></span> 実行中…';
+  await runR(code, document.getElementById('freeResults'));
+  freeBtn.disabled = false; freeBtn.innerHTML = '<span class="play">▶</span> 実行';
+}
+
+// init tab strip (disabled until data load)
+renderTabs();
+</script>
+</body>
+</html>
