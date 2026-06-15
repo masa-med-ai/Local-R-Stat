@@ -281,6 +281,10 @@ function setStatus(cls, text){
     setStatus('ready', 'R ' + v + ' 準備完了');
     document.getElementById('freeRun').disabled = false;
     refreshRunButtons();
+    // 追加DLが必要なのは生存分析の survival パッケージのみ。
+    // 起動完了後にバックグラウンドで先読みし、初回の待ち時間をなくす
+    //（Rワーカーは直列実行なので、先読み中に生存分析を押しても自動的に完了を待つ）。
+    webR.evalRVoid('try(suppressMessages(webr::install("survival")), silent = TRUE)').catch(() => {});
   } catch (e) {
     console.error(e);
     setStatus('error', 'R起動に失敗。ネット接続を確認しページを再読込してください');
@@ -551,8 +555,8 @@ synth: `
 <h4>何のための機能？</h4>患者データそのものを生成AI（ChatGPT等）にアップロードするのは情報管理上問題があります。この機能は<b>実データと同じ「構造」を持つ偽データ</b>を作るので、それをAIに渡せば、コードのデバッグや解析方法の相談を安全に行えます。
 <h4>何が保たれ、何が変わる？</h4>
 <ul>
-<li><b>保たれるもの</b>: 列名、各列の型（数値/カテゴリ）、行数、数値の平均・SD・おおよその範囲、カテゴリの選択肢と出現比率、欠損（NA）の割合。群分け変数を指定すれば、群ごとの分布の違いも再現します。</li>
-<li><b>完全に変わるもの</b>: <b>すべてのセルの中身</b>。数値は分布から引き直し、カテゴリは比率に従って振り直すため、実在する患者の値は1つも残りません。行どうしの対応も壊れます。</li>
+<li><b>保たれるもの</b>: 列名、各列の型（数値/カテゴリ/日付）、行数、数値の最小値・最大値と整数/小数の別、カテゴリの「種類の数」（2値変数は選択肢そのもの）、日付列の期間（最古〜最新）と書式、欠損（空セル）の割合。</li>
+<li><b>完全に変わるもの</b>: <b>すべてのセルの中身</b>。数値はMin〜Maxの範囲でランダムに引き直し、3水準以上のカテゴリは「列名＋連番」のダミーラベル（例: 医師1, 医師2…）をカテゴリ数だけ作って割り当てます（<b>あり/なしのような2値変数は元の表記を保ったままランダム化</b>）。日付・時刻（タイムスタンプ）と判定された列は、元の期間内のランダムな日付に置き換えます。実在する患者の値（氏名・実際の日付など）は1つも残らず、平均・SD・出現比率・行どうしの対応も保たれません。</li>
 </ul>
 <h4>使い方</h4>実行すると偽データのプレビューと「⬇ ダミーCSVをダウンロード」ボタンが出ます。落としたCSVをそのままAIに渡してください。
 <h4>注意</h4>これは統計的性質を真似た<b>合成データ</b>であり、匿名化された実データではありません。逆に、本物の解析結果（有意差など）はこの偽データでは再現されないため、あくまでコードや手順の相談用と考えてください。`,
@@ -763,14 +767,8 @@ const ANALYSES = [
       {key:'y', label:'アウトカム（2値）', kind:'single', filter:'all'},
       {key:'x', label:'検査値・マーカー（連続変数）', kind:'single', filter:'num'},
     ], plot:true },
-  { id:'synth', label:'🎲 ダミーデータ生成', desc:'生成AI（ChatGPT等）に安全に渡すための偽データCSVを作ります。各列の型・分布（数値は平均/SD、カテゴリは出現比率）・欠損率を保ったまま中身を完全に入れ替えるので、実データの値は1つも残りません。生成後にダウンロードボタンが出ます。',
-    fields:[
-      {key:'g', label:'群構造を保つ変数（任意・選ぶと群ごとの分布差を再現）', kind:'single', filter:'all'},
-    ],
-    opts:[
-      {key:'idnum', label:'ID列（ほぼ全行が一意な列）は連番に置換する', def:true},
-      {key:'corr', label:'数値変数どうしの相関も再現する（多変量正規近似）', def:false},
-    ],
+  { id:'synth', label:'🎲 ダミーデータ生成', desc:'生成AI（ChatGPT等）に安全に渡すための偽データCSVを作ります。カテゴリ変数は「列名＋連番」のダミーラベル（例: 医師1, 医師2…）をカテゴリ数だけ作ってランダム割当（あり/なし等の2値変数は元の表記のまま）、日付・時刻列は元の期間内のランダムな日付に、数値変数はMin〜Maxの範囲内でランダムに生成します（分布は再現しません）。欠損（空セル）は同じ割合で再現。生成後にダウンロードボタンが出ます。',
+    fields:[],
     plot:false },
 ];
 
@@ -1302,111 +1300,115 @@ if (nrow(or) > 1) fp(or[-1, , drop = FALSE], "Odds ratio (log scale)")
   }
 
   if (a.id === 'synth'){
-    const g = val('g');
-    const idFlag = opt('idnum') ? 'TRUE' : 'FALSE';
-    const corrFlag = opt('corr') ? 'TRUE' : 'FALSE';
     return {code:
 `## ===== ダミーデータ生成（実データの値は出力されません） =====
 set.seed(NULL)               # 毎回異なる乱数
 n <- nrow(df)
-use_id   <- ${idFlag}
-use_corr <- ${corrFlag}
-${g ? `grp_name <- "${escR(g)}"` : `grp_name <- NA`}
 
-# 群構造を保つ場合の行インデックス（群ごとに分布を学習）
-if (!is.na(grp_name) && grp_name %in% names(df)) {
-  gv <- as.character(df[[grp_name]])
-  groups <- split(seq_len(n), gv)
-} else {
-  groups <- list(all = seq_len(n))
+# 数値列で使う小数桁数を推定（0 を返したら整数列）
+n_dec <- function(v) {
+  v <- v[is.finite(v)]
+  if (!length(v)) return(0L)
+  for (p in 0:6) if (all(abs(v * 10^p - round(v * 10^p)) < 1e-9)) return(p)
+  6L
 }
 
-is_id_col <- function(x) {
-  ux <- length(unique(x[!is.na(x)]))
-  use_id && ux >= 0.9 * sum(!is.na(x)) && ux > 20
+# --- 日付/日時/時刻の判定 ---------------------------------------------------
+# 候補書式を「特殊→一般」の順に試し、9割以上が解釈できたらその型とみなす
+dt_parse <- function(v, kind, fmt) {
+  v <- as.character(v)
+  if (kind == "time")
+    suppressWarnings(as.POSIXct(paste("1970-01-01", v), format = paste("%Y-%m-%d", fmt), tz = "UTC"))
+  else
+    suppressWarnings(as.POSIXct(v, format = fmt, tz = "UTC"))
 }
-
-# 1つの列を、与えられた行集合ごとに合成
-synth_col <- function(x) {
-  if (is_id_col(x)) return(NULL)  # ID列は後で連番に
-  out <- rep(NA, n)
-  for (idx in groups) {
-    xi <- x[idx]
-    miss_rate <- mean(is.na(xi))
-    obs <- xi[!is.na(xi)]
-    if (length(obs) == 0) { out[idx] <- NA; next }
-    if (is.numeric(x)) {
-      m <- mean(obs); s <- sd(obs); if (is.na(s) || s == 0) s <- abs(m) * 0.05 + 1e-6
-      sim <- rnorm(length(idx), m, s)
-      # 整数列なら丸め、元の範囲にクリップ
-      if (all(obs == round(obs))) sim <- round(sim)
-      sim <- pmin(pmax(sim, min(obs)), max(obs))
-      sim <- round(sim, 4)
-    } else {
-      lv <- names(table(obs)); pr <- as.numeric(table(obs)); pr <- pr / sum(pr)
-      sim <- sample(lv, length(idx), replace = TRUE, prob = pr)
+DT_CAND <- list(
+  c("datetime", "%Y-%m-%d %H:%M:%S"), c("datetime", "%Y/%m/%d %H:%M:%S"),
+  c("datetime", "%Y-%m-%d %H:%M"),    c("datetime", "%Y/%m/%d %H:%M"),
+  c("datetime", "%Y年%m月%d日 %H:%M:%S"), c("datetime", "%Y年%m月%d日 %H:%M"),
+  c("date", "%Y-%m-%d"), c("date", "%Y/%m/%d"), c("date", "%Y.%m.%d"),
+  c("date", "%Y年%m月%d日"), c("date", "%m/%d/%Y"), c("date", "%d/%m/%Y"),
+  c("time", "%H:%M:%S"), c("time", "%H:%M"))
+detect_dt <- function(s) {
+  s <- as.character(s); s <- s[!is.na(s) & trimws(s) != ""]
+  if (!length(s)) return(NULL)
+  su <- unique(s)
+  for (cd in DT_CAND) {
+    if (mean(!is.na(dt_parse(su, cd[1], cd[2]))) >= 0.9) {
+      p <- as.numeric(dt_parse(s, cd[1], cd[2])); p <- p[is.finite(p)]
+      lo <- min(p); hi <- max(p)
+      if (cd[1] == "date") hi <- hi + 86399   # 末日も生成範囲に含める
+      if (hi <= lo) hi <- lo + 86400
+      return(list(kind = cd[1], fmt = cd[2], lo = lo, hi = hi))
     }
-    # 欠損率を再現
-    if (miss_rate > 0) sim[runif(length(idx)) < miss_rate] <- NA
-    out[idx] <- sim
   }
-  if (!is.numeric(x)) out <- as.character(out)
+  NULL
+}
+dt_range <- function(v, dt) {            # 実/偽の期間を同じ書式で表示するため
+  p <- as.numeric(dt_parse(v, dt$kind, dt$fmt)); p <- p[is.finite(p)]
+  if (!length(p)) return(c("-", "-"))
+  format(as.POSIXct(c(min(p), max(p)), origin = "1970-01-01", tz = "UTC"), dt$fmt)
+}
+
+# 1列を合成する
+#   数値      : Min〜Max の一様乱数（整数列は整数、小数列は元の小数桁で丸め）
+#   日付/日時 : 元の期間内のランダムな日付（同じ書式で出力）
+#   カテゴリ  : 2値は元の表記のまま、3水準以上は「<列名>1, <列名>2 …」をランダム割当
+#   欠損(NA)  : 元データと同じ割合で再現
+synth_col <- function(x, nm) {
+  out <- rep(NA, n)
+  miss_rate <- mean(is.na(x))
+  obs <- x[!is.na(x)]
+  if (length(obs)) {
+    if (is.numeric(x)) {
+      lo <- min(obs); hi <- max(obs); dec <- n_dec(obs)
+      sim <- runif(n, lo, hi)
+      out <- if (dec == 0) round(sim) else round(sim, dec)
+    } else {
+      dt <- detect_dt(obs)
+      if (!is.null(dt)) {                          # 日付/日時/時刻
+        out <- format(as.POSIXct(runif(n, dt$lo, dt$hi), origin = "1970-01-01", tz = "UTC"), dt$fmt)
+      } else {
+        u <- sort(unique(as.character(obs)))        # 出現カテゴリ
+        labels <- if (length(u) == 2) u else paste0(nm, seq_len(length(u)))  # 2値は元表記を維持
+        out <- sample(labels, n, replace = TRUE)    # ランダムに割当
+      }
+    }
+    if (miss_rate > 0) out[runif(n) < miss_rate] <- NA
+  }
   out
 }
 
-fake <- as.data.frame(lapply(names(df), function(nm) {
-  col <- synth_col(df[[nm]])
-  if (is.null(col)) seq_len(n) else col
-}), stringsAsFactors = FALSE, check.names = FALSE)
-names(fake) <- names(df)
-
-# ID列の連番化（接頭辞は元の最頻パターンを真似て "ID000x"）
-for (nm in names(df)) {
-  if (is_id_col(df[[nm]])) {
-    w <- max(3, nchar(as.character(n)))
-    fake[[nm]] <- sprintf(paste0("ID%0", w, "d"), seq_len(n))
-  }
-}
-
-# （任意）数値列の相関を多変量正規で再現
-if (use_corr) {
-  numv <- names(df)[sapply(df, is.numeric) & !sapply(df, is_id_col)]
-  if (length(numv) >= 2) {
-    cc <- complete.cases(df[, numv]); M <- as.matrix(df[cc, numv, drop = FALSE])
-    if (nrow(M) > length(numv) + 1) {
-      mu <- colMeans(M); S <- cov(M)
-      L <- tryCatch(chol(S + diag(1e-8, ncol(S))), error = function(e) NULL)
-      if (!is.null(L)) {
-        Z <- matrix(rnorm(n * length(numv)), n, length(numv))
-        sim <- Z %*% L + matrix(mu, n, length(numv), byrow = TRUE)
-        for (j in seq_along(numv)) {
-          v <- df[[numv[j]]]; ov <- v[!is.na(v)]
-          s <- sim[, j]
-          if (all(ov == round(ov))) s <- round(s)
-          s <- pmin(pmax(s, min(ov)), max(ov))
-          keep <- !is.na(fake[[numv[j]]])          # 既存の欠損パターンは維持
-          fake[[numv[j]]][keep] <- round(s, 4)[keep]
-        }
-        cat("数値変数の相関も再現しました: ", paste(numv, collapse = ", "), "\\n")
-      }
-    }
-  }
-}
+fake <- as.data.frame(
+  setNames(lapply(names(df), function(nm) synth_col(df[[nm]], nm)), names(df)),
+  stringsAsFactors = FALSE, check.names = FALSE)
 
 cat(sprintf("ダミーデータを生成しました: %d 行 × %d 列\\n（実データの値は含まれていません）\\n\\nプレビュー（先頭6行）:\\n", nrow(fake), ncol(fake)))
 print(utils::head(fake, 6))
 
-cat("\\n--- 分布が保たれているか（実データ vs ダミー）---\\n")
+cat("\\n--- 構造が保たれているか（実データ → ダミー）---\\n")
 for (nm in names(df)) {
-  if (is_id_col(df[[nm]])) next
-  if (is.numeric(df[[nm]])) {
-    cat(sprintf("%s: 実 平均%.3g/SD%.3g → 偽 平均%.3g/SD%.3g\\n", nm,
-      mean(df[[nm]], na.rm=TRUE), sd(df[[nm]], na.rm=TRUE),
-      mean(fake[[nm]], na.rm=TRUE), sd(fake[[nm]], na.rm=TRUE)))
+  x <- df[[nm]]
+  miss <- sprintf("（欠損 実%.0f%% / 偽%.0f%%）", 100 * mean(is.na(x)), 100 * mean(is.na(fake[[nm]])))
+  if (is.numeric(x)) {
+    dec <- n_dec(x[!is.na(x)])
+    cat(sprintf("%s（数値・%s）: 実 範囲 %.4g〜%.4g → 偽 範囲 %.4g〜%.4g%s\\n", nm,
+      if (dec == 0) "整数" else paste0("小数", dec, "桁"),
+      min(x, na.rm = TRUE), max(x, na.rm = TRUE),
+      min(fake[[nm]], na.rm = TRUE), max(fake[[nm]], na.rm = TRUE), miss))
   } else {
-    rt <- round(prop.table(table(df[[nm]]))*100); ft <- round(prop.table(table(fake[[nm]]))*100)
-    cat(sprintf("%s: 実 %s → 偽 %s\\n", nm,
-      paste(names(rt), rt, sep="=", collapse=" "), paste(names(ft), ft, sep="=", collapse=" ")))
+    dt <- detect_dt(x[!is.na(x)])
+    if (!is.null(dt)) {
+      lab <- c(datetime = "日時", date = "日付", time = "時刻")[[dt$kind]]
+      rr <- dt_range(x, dt); fr <- dt_range(fake[[nm]], dt)
+      cat(sprintf("%s（%s）: 実 %s〜%s → 偽 %s〜%s%s\\n", nm, lab, rr[1], rr[2], fr[1], fr[2], miss))
+    } else {
+      lbls <- sort(unique(na.omit(as.character(fake[[nm]]))))
+      k <- length(unique(na.omit(as.character(x))))
+      cat(sprintf("%s（カテゴリ・%s）: 実 %d 種 → 偽 %d 種（%s%s）%s\\n", nm,
+        if (k == 2) "2値=元表記" else "連番ラベル", k, length(lbls),
+        paste(utils::head(lbls, 3), collapse = ", "), if (length(lbls) > 3) " …" else "", miss))
+    }
   }
 }
 
