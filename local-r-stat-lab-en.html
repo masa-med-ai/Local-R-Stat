@@ -1,0 +1,1594 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Local R Stat Lab — In-browser R statistical analysis</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#F7F8F6;
+  --panel:#FFFFFF;
+  --ink:#1B2A33;
+  --ink-soft:#5A6B75;
+  --line:#DDE3E0;
+  --r-blue:#276DC3;
+  --r-blue-dark:#1B4F8F;
+  --console-bg:#10212B;
+  --console-fg:#D7E3EA;
+  --ok:#1E7F4F;
+  --warn:#B3541E;
+  --err:#C0392B;
+  --mono:"IBM Plex Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  --sans:"IBM Plex Sans",-apple-system,"Hiragino Kaku Gothic ProN","Noto Sans JP",sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html{font-size:15px}
+body{font-family:var(--sans);background:var(--paper);color:var(--ink);line-height:1.65}
+button{font-family:inherit;cursor:pointer}
+select,input[type=text]{font-family:inherit;font-size:.95rem}
+
+/* ---------- header ---------- */
+header{
+  background:var(--console-bg);color:var(--console-fg);
+  padding:.9rem 1.4rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap;
+}
+header .logo{font-family:var(--mono);font-weight:500;font-size:1.05rem;letter-spacing:.02em}
+header .logo .gt{color:var(--r-blue);font-weight:700}
+header .sub{font-size:.78rem;opacity:.7}
+.status{
+  margin-left:auto;font-family:var(--mono);font-size:.78rem;
+  padding:.3rem .8rem;border-radius:999px;border:1px solid rgba(255,255,255,.25);
+  display:flex;align-items:center;gap:.45rem;
+}
+.status .dot{width:8px;height:8px;border-radius:50%;background:#E0A800;animation:pulse 1.2s infinite}
+.status.ready .dot{background:#3DDC84;animation:none}
+.status.error .dot{background:#FF6B5E;animation:none}
+@keyframes pulse{0%,100%{opacity:.4}50%{opacity:1}}
+.privacy{
+  background:#EAF2EC;border-bottom:1px solid var(--line);
+  font-size:.8rem;color:#23513A;padding:.45rem 1.4rem;
+}
+.privacy strong{font-weight:700}
+
+/* ---------- layout ---------- */
+main{max-width:1180px;margin:0 auto;padding:1.4rem;display:grid;grid-template-columns:330px 1fr;gap:1.4rem;align-items:start}
+@media(max-width:880px){main{grid-template-columns:1fr}}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;overflow:hidden}
+.panel h2{
+  font-size:.78rem;font-weight:700;letter-spacing:.08em;color:var(--ink-soft);
+  padding:.7rem 1rem;border-bottom:1px solid var(--line);background:#FBFCFA;
+  font-family:var(--mono);text-transform:uppercase;
+}
+.panel .body{padding:1rem}
+
+/* ---------- data panel ---------- */
+.dropzone{
+  border:2px dashed #B9C4BE;border-radius:8px;padding:1.6rem 1rem;text-align:center;
+  color:var(--ink-soft);font-size:.88rem;transition:border-color .15s,background .15s;
+}
+.dropzone.drag{border-color:var(--r-blue);background:#F0F6FD}
+.dropzone .big{font-size:1rem;color:var(--ink);font-weight:500;margin-bottom:.3rem}
+.dropzone button{
+  margin-top:.7rem;background:var(--r-blue);color:#fff;border:none;border-radius:6px;
+  padding:.5rem 1.1rem;font-size:.88rem;font-weight:500;
+}
+.dropzone button:hover{background:var(--r-blue-dark)}
+.enc-row{margin-top:.8rem;font-size:.78rem;color:var(--ink-soft);display:flex;gap:.4rem;justify-content:center;align-items:center}
+.datameta{font-size:.82rem;color:var(--ink-soft);margin-bottom:.7rem;display:flex;gap:1rem;flex-wrap:wrap}
+.datameta b{color:var(--ink);font-family:var(--mono)}
+.varlist{display:flex;flex-direction:column;gap:.3rem;max-height:300px;overflow:auto}
+.varitem{
+  display:flex;align-items:center;gap:.5rem;font-size:.82rem;
+  padding:.32rem .5rem;border:1px solid var(--line);border-radius:6px;background:#FCFDFB;
+}
+.varitem .name{font-family:var(--mono);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1}
+.badge{font-family:var(--mono);font-size:.66rem;padding:.1rem .42rem;border-radius:4px;font-weight:500;flex-shrink:0}
+.badge.num{background:#E3EDFA;color:var(--r-blue-dark)}
+.badge.cat{background:#F3E9DC;color:#7A4E1D}
+.previewwrap{overflow:auto;max-height:220px;margin-top:.8rem;border:1px solid var(--line);border-radius:6px}
+table.preview{border-collapse:collapse;font-size:.74rem;font-family:var(--mono);width:100%}
+table.preview th,table.preview td{padding:.28rem .55rem;border-bottom:1px solid #EEF1EF;white-space:nowrap;text-align:left}
+table.preview th{background:#F3F6F4;position:sticky;top:0}
+.replace-btn{margin-top:.8rem;width:100%;background:#fff;border:1px solid var(--line);border-radius:6px;padding:.45rem;font-size:.82rem;color:var(--ink-soft)}
+.replace-btn:hover{border-color:var(--r-blue);color:var(--r-blue)}
+
+/* ---------- analysis ---------- */
+.tabs{display:flex;flex-wrap:wrap;gap:.4rem;padding:.8rem 1rem 0}
+.tab{
+  border:1px solid var(--line);background:#fff;border-radius:999px;
+  padding:.38rem .9rem;font-size:.84rem;color:var(--ink-soft);
+}
+.tab:hover{border-color:var(--r-blue);color:var(--r-blue)}
+.tab.active{background:var(--r-blue);border-color:var(--r-blue);color:#fff;font-weight:500}
+.config{padding:1rem;display:flex;flex-direction:column;gap:.8rem}
+.config .desc{font-size:.82rem;color:var(--ink-soft)}
+.field{display:flex;flex-direction:column;gap:.25rem}
+.field label{font-size:.78rem;font-weight:500;color:var(--ink-soft)}
+.field select{
+  padding:.45rem .6rem;border:1px solid var(--line);border-radius:6px;background:#fff;color:var(--ink);
+}
+.field select[multiple]{min-height:6.5rem}
+.field .hint{font-size:.72rem;color:#8A989F}
+.helpbtn{align-self:flex-start;background:#fff;border:1px solid #CCDEF3;border-radius:999px;padding:.3rem .9rem;font-size:.78rem;color:var(--r-blue)}
+.helpbtn:hover{border-color:var(--r-blue);background:#F4F8FD}
+.helpbox{background:#F4F8FD;border:1px solid #CCDEF3;border-radius:8px;padding:.9rem 1.1rem;font-size:.84rem;line-height:1.85;color:#21455F}
+.helpbox h4{font-size:.82rem;margin:.7rem 0 .15rem;color:var(--r-blue-dark)}
+.helpbox h4:first-child{margin-top:0}
+.helpbox ul{padding-left:1.25rem;margin:.1rem 0}
+.helpbox b{color:#163A56}
+.interp{border:1px solid var(--line);border-radius:8px;padding:.9rem 1.1rem;font-size:.86rem;line-height:1.9;background:#FBFCFA}
+.interp.sig{background:#EFF8F1;border-color:#BCDFC6;color:#1C4A2E}
+.interp.ns{background:#FBF6EC;border-color:#E8D9B8;color:#5C4A1E}
+.interp h4{font-size:.8rem;margin-bottom:.35rem}
+.interp div{margin-bottom:.2rem}
+.outbar{display:flex;gap:.5rem;flex-wrap:wrap}
+.minibtn{background:#fff;border:1px solid var(--line);border-radius:6px;padding:.28rem .8rem;font-size:.76rem;color:var(--ink-soft)}
+.minibtn:hover{border-color:var(--r-blue);color:var(--r-blue)}
+.optrow{display:flex;gap:1.2rem;flex-wrap:wrap;font-size:.84rem}
+.optrow label{display:flex;align-items:center;gap:.35rem}
+.runbtn{
+  align-self:flex-start;background:var(--ink);color:#fff;border:none;border-radius:6px;
+  padding:.55rem 1.5rem;font-size:.92rem;font-weight:500;display:flex;align-items:center;gap:.5rem;
+}
+.runbtn:hover{background:#000}
+.runbtn:disabled{background:#9AA7AD;cursor:not-allowed}
+.runbtn .play{font-family:var(--mono)}
+
+/* ---------- results ---------- */
+.results{display:flex;flex-direction:column;gap:1rem;padding:0 1rem 1rem}
+.rcode{
+  background:var(--console-bg);border-radius:8px;overflow:hidden;
+}
+.rcode .bar{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:.4rem .8rem;font-family:var(--mono);font-size:.72rem;color:#8FA8B5;
+  border-bottom:1px solid rgba(255,255,255,.08);
+}
+.rcode .bar button{
+  background:transparent;border:1px solid rgba(255,255,255,.25);color:#B9CCD6;
+  border-radius:4px;padding:.12rem .6rem;font-size:.7rem;font-family:var(--mono);
+}
+.rcode .bar button:hover{border-color:#fff;color:#fff}
+.rcode pre{
+  font-family:var(--mono);font-size:.78rem;line-height:1.55;color:#9FD0FF;
+  padding:.8rem 1rem;overflow:auto;max-height:260px;white-space:pre;
+}
+.rout{
+  background:#FCFDFB;border:1px solid var(--line);border-radius:8px;
+  font-family:var(--mono);font-size:.8rem;line-height:1.55;
+  padding:.9rem 1rem;overflow:auto;white-space:pre;max-height:480px;
+}
+.rout .stderr{color:var(--err)}
+.plotgrid{display:flex;flex-wrap:wrap;gap:1rem}
+.plotgrid canvas{
+  border:1px solid var(--line);border-radius:8px;background:#fff;
+  max-width:100%;height:auto;
+}
+.spin{display:inline-block;width:14px;height:14px;border:2px solid rgba(255,255,255,.35);border-top-color:#fff;border-radius:50%;animation:rot .7s linear infinite}
+@keyframes rot{to{transform:rotate(360deg)}}
+.note{font-size:.78rem;color:var(--ink-soft);padding:0 1rem 1rem}
+
+/* ---------- free console ---------- */
+.console-panel textarea{
+  width:100%;font-family:var(--mono);font-size:.82rem;line-height:1.55;
+  background:var(--console-bg);color:var(--console-fg);border:none;outline:none;
+  padding:.9rem 1rem;min-height:110px;resize:vertical;
+}
+.console-panel .toolbar{
+  display:flex;align-items:center;gap:.7rem;padding:.6rem 1rem;background:#FBFCFA;border-top:1px solid var(--line);
+}
+.console-panel .toolbar .hint{font-size:.74rem;color:var(--ink-soft)}
+footer{max-width:1180px;margin:0 auto;padding:0 1.4rem 2rem;font-size:.74rem;color:#8A989F}
+footer a{color:var(--r-blue)}
+.placeholder{padding:2.5rem 1rem;text-align:center;color:#9AA7AD;font-size:.88rem}
+</style>
+</head>
+<body>
+
+<header>
+  <div>
+    <div class="logo"><span class="gt">&gt;</span> Local R Stat Lab</div>
+    <div class="sub">Load a CSV and run statistical analysis in your browser with a real R engine (WebR)</div>
+  </div>
+  <div class="status" id="status"><span class="dot"></span><span id="statusText">Starting the R engine… (the first load may take 1–2 minutes)</span></div>
+</header>
+<div class="privacy">🔒 <strong>Your data is processed entirely inside this browser.</strong> The contents of your CSV are never sent over the network (only the initial R engine download requires a connection).</div>
+
+<main>
+  <!-- ===== left: data ===== -->
+  <div style="display:flex;flex-direction:column;gap:1.4rem">
+    <section class="panel">
+      <h2>1 · Data</h2>
+      <div class="body" id="dataBody">
+        <div class="dropzone" id="dropzone">
+          <div class="big">Drop a CSV file here</div>
+          <div>or</div>
+          <button id="pickBtn">Choose file</button>
+          <input type="file" id="fileInput" accept=".csv,text/csv" hidden>
+          <div class="enc-row">
+            Character encoding:
+            <select id="encSel">
+              <option value="auto" selected>Auto-detect</option>
+              <option value="utf-8">UTF-8</option>
+              <option value="shift_jis">Shift_JIS</option>
+            </select>
+          </div>
+        </div>
+        <div id="dataInfo" hidden>
+          <div class="datameta">
+            <span>File: <b id="metaName"></b></span>
+            <span>Rows: <b id="metaRows"></b></span>
+            <span>Columns: <b id="metaCols"></b></span>
+          </div>
+          <div class="varlist" id="varList"></div>
+          <div class="previewwrap"><table class="preview" id="previewTable"></table></div>
+          <button class="replace-btn" id="replaceBtn">Replace with a different CSV</button>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ===== right: analysis ===== -->
+  <div style="display:flex;flex-direction:column;gap:1.4rem">
+    <section class="panel">
+      <h2>2 · Analysis</h2>
+      <div class="tabs" id="tabs"></div>
+      <div class="config" id="config"><div class="placeholder">Please load a CSV first</div></div>
+      <div class="results" id="results"></div>
+      <div class="note" id="codeNote" hidden>▲ The R code that was run is shown in the dark box above. You can copy it and reproduce the analysis in your own R session as-is.</div>
+    </section>
+
+    <section class="panel console-panel">
+      <h2>3 · R Console (free input)</h2>
+      <textarea id="freeCode" spellcheck="false" placeholder="# The loaded data is available as df
+# e.g.: summary(df) / table(df[[&quot;Sex&quot;]]) / lm(y ~ x, data = df)"></textarea>
+      <div class="toolbar">
+        <button class="runbtn" id="freeRun" disabled><span class="play">▶</span> Run</button>
+        <span class="hint">You can also run with Ctrl+Enter (⌘+Enter)</span>
+      </div>
+      <div class="results" id="freeResults" style="padding-top:1rem"></div>
+    </section>
+
+    <footer>
+      Powered by <a href="https://docs.r-wasm.org/webr/latest/" target="_blank" rel="noopener">WebR</a> (an open-source project that compiles R to WebAssembly).
+      Analysis results are provided as reference information to support research decisions; please confirm final statistical conclusions with a statistician.
+    </footer>
+  </div>
+</main>
+
+<script type="module">
+/* =========================================================
+   WebR bootstrap
+========================================================= */
+const statusEl = document.getElementById('status');
+const statusText = document.getElementById('statusText');
+let webR = null, ready = false;
+
+function setStatus(cls, text){
+  statusEl.className = 'status ' + cls;
+  statusText.textContent = text;
+}
+
+(async () => {
+  try {
+    const { WebR } = await import('https://webr.r-wasm.org/latest/webr.mjs');
+    webR = new WebR();
+    await webR.init();
+    const v = await webR.evalRString('paste(R.version$major, R.version$minor, sep=".")');
+    ready = true;
+    setStatus('ready', 'R ' + v + ' ready');
+    document.getElementById('freeRun').disabled = false;
+    refreshRunButtons();
+    // The only additional download required is the survival package for survival analysis.
+    // Prefetch it in the background after startup so there is no wait on first use
+    // (the R worker runs serially, so pressing survival analysis during prefetch automatically waits for it to finish).
+    webR.evalRVoid('try(suppressMessages(webr::install("survival")), silent = TRUE)').catch(() => {});
+  } catch (e) {
+    console.error(e);
+    setStatus('error', 'Failed to start R. Check your internet connection and reload the page.');
+  }
+})();
+
+/* =========================================================
+   CSV loading (fully local)
+========================================================= */
+let dataLoaded = false;
+let columns = [];          // [{name, type:'num'|'cat', nLevels}]
+let csvTextCache = '';
+let nRows = 0;
+
+const dropzone = document.getElementById('dropzone');
+const fileInput = document.getElementById('fileInput');
+document.getElementById('pickBtn').onclick = () => fileInput.click();
+document.getElementById('replaceBtn').onclick = () => fileInput.click();
+fileInput.onchange = () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); };
+
+['dragover','dragenter'].forEach(ev => dropzone.addEventListener(ev, e => {
+  e.preventDefault(); dropzone.classList.add('drag');
+}));
+['dragleave','drop'].forEach(ev => dropzone.addEventListener(ev, e => {
+  e.preventDefault(); dropzone.classList.remove('drag');
+}));
+dropzone.addEventListener('drop', e => {
+  const f = e.dataTransfer.files[0];
+  if (f) loadFile(f);
+});
+
+function decodeBuffer(buf){
+  const mode = document.getElementById('encSel').value;
+  if (mode === 'utf-8') return new TextDecoder('utf-8').decode(buf);
+  if (mode === 'shift_jis') return new TextDecoder('shift_jis').decode(buf);
+  // auto: try UTF-8, fall back to Shift_JIS if replacement chars appear
+  const utf8 = new TextDecoder('utf-8', {fatal:false}).decode(buf);
+  if (utf8.includes('\uFFFD')) {
+    try { return new TextDecoder('shift_jis').decode(buf); } catch(e){ return utf8; }
+  }
+  return utf8;
+}
+
+// minimal CSV parser (quotes-aware) — for preview/typing only; R does real parsing
+function parseCSV(text){
+  const rows = []; let row = [], cur = '', inQ = false;
+  for (let i = 0; i < text.length; i++){
+    const c = text[i];
+    if (inQ){
+      if (c === '"'){ if (text[i+1] === '"'){ cur += '"'; i++; } else inQ = false; }
+      else cur += c;
+    } else {
+      if (c === '"') inQ = true;
+      else if (c === ',') { row.push(cur); cur = ''; }
+      else if (c === '\n') { row.push(cur); rows.push(row); row = []; cur = ''; }
+      else if (c === '\r') { /* skip */ }
+      else cur += c;
+    }
+  }
+  if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
+  return rows.filter(r => !(r.length === 1 && r[0].trim() === ''));
+}
+
+async function loadFile(file){
+  const buf = await file.arrayBuffer();
+  const text = decodeBuffer(buf).replace(/^\uFEFF/, '');
+  const rows = parseCSV(text);
+  if (rows.length < 2){ alert('No data rows found. Please provide a CSV with a header row plus data rows.'); return; }
+
+  const header = rows[0].map((h,i) => h.trim() || ('V' + (i+1)));
+  const body = rows.slice(1);
+  nRows = body.length;
+
+  // type detection
+  columns = header.map((name, ci) => {
+    let numeric = 0, nonEmpty = 0; const levels = new Set();
+    for (const r of body){
+      const v = (r[ci] ?? '').trim();
+      if (v === '' || v === 'NA') continue;
+      nonEmpty++;
+      levels.add(v);
+      if (/^[-+]?\d*\.?\d+([eE][-+]?\d+)?$/.test(v)) numeric++;
+    }
+    const isNum = nonEmpty > 0 && numeric / nonEmpty > 0.9 && levels.size > 5;
+    const isNumStrict = nonEmpty > 0 && numeric / nonEmpty > 0.9;
+    return { name, type: isNumStrict ? (levels.size <= 5 ? 'num-few' : 'num') : 'cat', nLevels: levels.size };
+  });
+  // num-few: numeric but few levels (could be group codes) — treat as numeric, but offer in group selects too
+  columns.forEach(c => { if (c.type === 'num-few') c.type = 'num'; });
+
+  csvTextCache = text;
+  // push into R virtual FS
+  if (ready){
+    await writeDataToR();
+  } else {
+    const waiter = setInterval(async () => {
+      if (ready){ clearInterval(waiter); await writeDataToR(); }
+    }, 500);
+  }
+
+  // render meta
+  document.getElementById('dataInfo').hidden = false;
+  dropzone.hidden = true;
+  document.getElementById('metaName').textContent = file.name;
+  document.getElementById('metaRows').textContent = nRows.toLocaleString();
+  document.getElementById('metaCols').textContent = columns.length;
+
+  const vl = document.getElementById('varList');
+  vl.innerHTML = '';
+  columns.forEach(c => {
+    const d = document.createElement('div');
+    d.className = 'varitem';
+    d.innerHTML = `<span class="name" title="${escHtml(c.name)}">${escHtml(c.name)}</span>
+      <span class="badge ${c.type === 'num' ? 'num' : 'cat'}">${c.type === 'num' ? 'numeric' : 'categorical'}</span>
+      <span style="font-size:.68rem;color:#8A989F">${c.nLevels} levels</span>`;
+    vl.appendChild(d);
+  });
+
+  // preview (first 8 rows)
+  const tbl = document.getElementById('previewTable');
+  tbl.innerHTML = '<tr>' + header.map(h => `<th>${escHtml(h)}</th>`).join('') + '</tr>' +
+    body.slice(0, 8).map(r => '<tr>' + header.map((_,i) => `<td>${escHtml(r[i] ?? '')}</td>`).join('') + '</tr>').join('');
+
+  dataLoaded = true;
+  renderTabs();
+  selectTab(currentTab || 'desc');
+}
+
+async function writeDataToR(){
+  const enc = new TextEncoder().encode(csvTextCache);
+  await webR.FS.writeFile('/tmp/data.csv', enc);
+  await webR.evalRVoid(`df <- read.csv('/tmp/data.csv', check.names = FALSE, fileEncoding = 'UTF-8')`);
+}
+
+function escHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
+function escR(s){ return String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"'); }
+function col(name){ return `df[["${escR(name)}"]]`; }
+
+/* =========================================================
+   Analysis definitions
+========================================================= */
+/* =========================================================
+   Beginner help (per analysis)
+========================================================= */
+const HELP = {
+desc: `
+<h4>When to use it</h4>This is the <b>very first step</b> of any analysis. It gives you an overview of your data (central values, spread, number of missing values, shape of the distribution). The golden rule is to start here rather than jumping straight into significance tests.
+<h4>How to read the results</h4>
+<ul>
+<li><b>Mean (SD)</b> … the summary value to use when the distribution is roughly symmetric (bell-shaped). SD (standard deviation) measures the spread.</li>
+<li><b>Median [IQR]</b> … the preferred summary for skewed data (length of stay, tumor markers, etc.). The IQR is "the range covering the middle 50% of people."</li>
+<li><b>Histogram</b> … as a rule of thumb, report mean (SD) if the shape is symmetric, and median [IQR] if it has a tail to one side.</li>
+</ul>
+<h4>Caution</h4>Always check the number of missing values. Extreme outliers may be data-entry errors (wrong unit or wrong order of magnitude).`,
+
+table1: `
+<h4>When to use it</h4>Use this to build the <b>patient characteristics table (Table 1)</b> that appears at the start of a paper. It is equivalent to EZR's "summary table output."
+<h4>How to read the results</h4>
+<ul>
+<li>Numeric variables are summarized as <b>mean (SD)</b> and categorical variables as <b>n (%)</b>.</li>
+<li>If you choose a grouping variable, per-group columns appear, with the <b>between-group p value</b> and the test used in the rightmost column (2 groups: t test / Wilcoxon; 3+ groups: ANOVA / Kruskal-Wallis; categorical: χ² / Fisher).</li>
+<li>If many variables are skewed, turn on the "median [IQR]" option.</li>
+</ul>
+<h4>Caution</h4>Including p values in the baseline table of a randomized controlled trial (RCT) is sometimes discouraged (if randomization worked correctly, any difference should be due to chance). In observational studies, however, it is useful for spotting between-group imbalances, i.e., candidate confounders.`,
+
+two: `
+<h4>When to use it</h4>Use this to compare a continuous (numeric) value between <b>two independent groups</b>, such as "Is there a difference in blood pressure between group A and group B?"
+<h4>How to read the results</h4>
+<ul>
+<li>The <b>p value</b> is "the probability of observing a difference this large or larger purely by chance, when there is actually no difference." By convention, p &lt; 0.05 is called "statistically significant."</li>
+<li>The <b>t test</b> compares the means and assumes the data are approximately normally distributed. <b>Welch's correction</b> can be used even when the two groups have unequal variances; when in doubt, leaving Welch on is fine.</li>
+<li>The <b>Wilcoxon test</b> is rank-based and can be used even with skewed distributions or outliers.</li>
+<li>A <b>Shapiro-Wilk</b> p &lt; 0.05 is a sign that the data may deviate from a normal distribution. In that case, give more weight to the Wilcoxon result.</li>
+</ul>
+<h4>Caution</h4>A small p does not mean a large difference. Judge the size of the difference from the mean difference and its 95% confidence interval. Also, <b>this cannot be used for before/after comparisons within the same patients</b> (for paired data use the McNemar test, or in the R console use t.test(before, after, paired = TRUE)).`,
+
+multi: `
+<h4>When to use it</h4>Use this to compare a continuous value across <b>three or more groups</b> (e.g., comparing a tumor marker across stage I/II/III).
+<h4>How to read the results</h4>
+<ul>
+<li>The <b>ANOVA</b> p value only tells you that "there is a difference somewhere between groups."</li>
+<li><b>Tukey HSD</b> shows "which pairs differ," with adjustment for multiple comparisons. "diff" is the difference and "p adj" is the adjusted p value.</li>
+<li>When the distribution is skewed or there are many outliers, look at the <b>Kruskal-Wallis test</b> (rank-based).</li>
+</ul>
+<h4>Caution</h4>Repeating t tests across three or more groups is not acceptable (the more tests you run, the more likely you are to get a "significant" result by chance, i.e., the multiple-testing problem).`,
+
+cat: `
+<h4>When to use it</h4>Use this to examine the <b>association between two categorical variables</b>, such as "Is sex associated with the presence of a complication?"
+<h4>How to read the results</h4>
+<ul>
+<li>First, get an intuitive sense of the pattern from the <b>cross-tabulation</b> and the <b>row %</b>.</li>
+<li>If the <b>χ² (chi-square) test</b> gives p &lt; 0.05, the interpretation is "it is hard to say the two variables are unrelated."</li>
+<li>The χ² test becomes inaccurate when any cell has an <b>expected count</b> below 5. In that case, use the <b>Fisher exact test</b> result instead (when in doubt, Fisher is safe).</li>
+</ul>
+<h4>Caution</h4>An association does not mean a causal relationship. For before/after comparisons in the same subjects, use the McNemar test rather than this test.`,
+
+mcnemar: `
+<h4>When to use it</h4>This is specifically for <b>paired categorical data measured twice on the same subjects</b>. For example, whether the proportion of "symptom present/absent before treatment" versus "symptom present/absent after treatment" changed in the same patients.
+<h4>How to read the results</h4>
+<ul>
+<li>Only the <b>discordant pairs ("present before → absent after" and "absent before → present after") drive the test</b>. People who were the same at both time points provide no evidence of change and are excluded from the calculation.</li>
+<li>p &lt; 0.05 is interpreted as "the proportion changed between before and after."</li>
+<li>When there are few discordant pairs (roughly 25 or fewer), the approximation becomes inaccurate, so look at the automatically displayed <b>binomial (exact) test</b> p value.</li>
+</ul>
+<h4>Caution</h4>Using an ordinary χ² test here would ignore the fact that "these are the same individuals' data" and give a wrong result. Always use McNemar for before/after comparisons.`,
+
+surv: `
+<h4>When to use it</h4>This analysis deals with "the time until an event (death, recurrence, etc.) occurs." Its key strength is correctly handling <b>censoring</b> (subjects who had no event by the end of observation, or who were lost to follow-up). Enter event = 1, censored = 0.
+<h4>How to read the results</h4>
+<ul>
+<li><b>Kaplan-Meier curve</b>: the vertical axis is "the proportion of people who remain event-free up to that time point." A step down means an event occurred; the small tick marks are censoring.</li>
+<li><b>Median survival time (median)</b>: the time until half of the subjects have had the event.</li>
+<li><b>Log-rank test</b>: the p value for whether the curves differ between groups overall.</li>
+<li><b>Hazard ratio (HR)</b>: the result of the Cox model. HR 0.5 means "the event is half as likely," HR 2 means twice as likely. It is significant <b>if the 95% CI does not cross 1</b>.</li>
+<li><b>Test of proportional hazards</b>: p &lt; 0.05 is a sign that the Cox model's assumption that "the HR is constant over time" may be in doubt (also check whether the KM curves cross partway through).</li>
+</ul>
+<h4>Caution</h4>Make sure the follow-up time uses a consistent unit (months, days, or years). Results become unstable when there are few events.`,
+
+cor: `
+<h4>When to use it</h4>Use this to examine whether two continuous variables have a relationship in which "the larger one is, the larger/smaller the other."
+<h4>How to read the results</h4>
+<ul>
+<li>The correlation coefficient <b>r ranges from −1 to +1</b>. Closer to +1 means an upward (positive) relationship; closer to −1 means a downward (negative) one. Rule of thumb: |r| &lt; 0.2 essentially no correlation / 0.2–0.4 weak / 0.4–0.7 moderate / 0.7 and above strong (thresholds vary by field).</li>
+<li><b>Pearson</b> assumes a linear relationship; <b>Spearman</b> is rank-based and robust to outliers and curvilinear relationships. When the two results differ substantially, check the scatter plot.</li>
+</ul>
+<h4>Caution</h4><b>Correlation is not causation.</b> Also, r can change a lot with just one or two outliers, so always inspect the scatter plot visually.`,
+
+lm: `
+<h4>When to use it</h4>Use this when you want to explain a continuous outcome (e.g., blood pressure) using several factors, or to <b>adjust for the effects of other factors</b> (multiple linear regression).
+<h4>How to read the results</h4>
+<ul>
+<li><b>Estimate (coefficient)</b>: how much the outcome changes when that variable increases by 1, holding the other variables constant. For categorical variables this is "the difference from the reference category."</li>
+<li><b>Pr(&gt;|t|)</b>: the p value for each coefficient. It is significant if the 95% confidence interval does not cross 0.</li>
+<li><b>R² (coefficient of determination)</b>: what percentage of the variability in the outcome the model explains.</li>
+</ul>
+<h4>Caution</h4>As a rule of thumb, you need <b>at least 10–15 cases per explanatory variable</b>. When explanatory variables are strongly correlated with each other (multicollinearity), the coefficients become unstable.`,
+
+glm: `
+<h4>When to use it</h4>When the outcome is <b>binary</b> (complication present/absent, improvement yes/no, etc.), use this to examine associations while adjusting for several factors (a workhorse of multivariable analysis).
+<h4>How to read the results</h4>
+<ul>
+<li><b>Odds ratio (OR)</b>: greater than 1 means the outcome is more likely; less than 1 means less likely. For example, OR 2.0 means "the odds are doubled."</li>
+<li>It is statistically significant <b>if the 95% confidence interval does not cross 1</b>.</li>
+<li>For a continuous variable, the OR is the value "per 1-unit increase in that variable" (per year of age, for example).</li>
+</ul>
+<h4>Caution</h4>An OR is not the same as a risk ratio, and the two diverge when the outcome is frequent (over 10%). As a rule of thumb, results are unstable unless there are <b>at least 10 events per explanatory variable</b> (EPV ≥ 10).`,
+
+paired: `
+<h4>When to use it</h4>For comparing continuous values <b>measured twice on the same subjects</b> (e.g., blood pressure before and after treatment in the same patients). When the data have a "paired correspondence," use this rather than an independent two-group comparison (t test).
+<h4>How to read the results</h4>
+<ul>
+<li>What is being tested is <b>"whether the mean of the differences (after − before) is 0."</b> Because it focuses on each person's before/after difference, between-individual variability cancels out and statistical power increases.</li>
+<li>If the distribution of the differences is approximately normal, use the <b>paired t test</b>; if it is skewed (Shapiro-Wilk of the differences p &lt; 0.05), give more weight to the <b>Wilcoxon signed-rank test</b>.</li>
+</ul>
+<h4>Caution</h4>Rows where the pairing is broken (e.g., by missing values) are automatically excluded. This cannot be used for data where the subjects differ before and after (in that case, use the two-group comparison).`,
+
+roc: `
+<h4>When to use it</h4>Use this to evaluate <b>how well</b> a continuous test or marker (tumor marker, score, etc.) can distinguish a binary outcome (disease present/absent, etc.), and to determine a <b>cutoff value</b>.
+<h4>How to read the results</h4>
+<ul>
+<li><b>AUC</b> (area under the curve): 0.5 = same as a coin flip (no discrimination), 1.0 = perfect discrimination. Rule of thumb: 0.7–0.8 acceptable / 0.8–0.9 good / 0.9 and above excellent.</li>
+<li><b>If the lower bound of the 95% CI exceeds 0.5</b>, you can say "there is better-than-chance discrimination."</li>
+<li><b>Optimal cutoff (Youden index)</b>: the point that maximizes sensitivity + specificity. The sensitivity and specificity at that point are shown.</li>
+</ul>
+<h4>Caution</h4>The cutoff should change with the purpose (favor sensitivity for screening where you do not want to miss cases; favor specificity for confirmatory diagnosis). A cutoff chosen on the same data tends to overestimate performance, so validation on a separate dataset is ideal.`,
+
+synth: `
+<h4>What is this feature for?</h4>Uploading actual patient data to a generative AI (ChatGPT, etc.) raises information-governance concerns. This feature creates <b>fake data that has the same "structure" as your real data</b>, so you can hand it to an AI to safely debug code or get advice on analysis methods.
+<h4>What is preserved and what changes?</h4>
+<ul>
+<li><b>Preserved</b>: column names, the type of each column (numeric/categorical/date), the number of rows, the min and max of numeric columns and whether they are integers or decimals, the "number of distinct categories" in categorical columns (for binary variables, the actual options), the span (earliest–latest) and format of date columns, and the proportion of missing values (empty cells).</li>
+<li><b>Completely changed</b>: <b>the contents of every cell</b>. Numeric values are redrawn at random within the Min–Max range; categories with three or more levels are assigned dummy labels of the form "column name + sequential number" (e.g., Doctor1, Doctor2…), creating as many as there are categories (<b>binary variables such as present/absent keep their original labels and are simply randomized</b>). Columns detected as dates/times (timestamps) are replaced with random dates within the original span. Not a single real patient value (names, actual dates, etc.) remains, and the mean, SD, frequency proportions, and row-to-row correspondences are not preserved.</li>
+</ul>
+<h4>How to use it</h4>When you run it, a preview of the fake data and a "⬇ Download dummy CSV" button appear. Hand the downloaded CSV directly to the AI.
+<h4>Caution</h4>This is <b>synthetic data</b> that imitates statistical properties, not anonymized real data. Conversely, genuine analysis results (such as significant differences) are not reproduced in this fake data, so treat it strictly as material for discussing code or procedures.`,
+};
+
+/* =========================================================
+   Dynamic interpretation engine
+   (auto-generates plain-language interpretation text from @@KV key=value lines in the R output)
+========================================================= */
+const Pn = s => { const v = parseFloat(s); return isNaN(v) ? null : v; };
+const pj = p => p < 0.001 ? 'p < 0.001' : 'p = ' + Number(p.toPrecision(2));
+const g4 = s => { const v = parseFloat(s); return isNaN(v) ? escHtml(String(s)) : String(Number(v.toPrecision(4))); };
+const NS_NOTE = 'This does <b>not</b> mean it has been proven that "there is no difference." The correct interpretation is "there was not enough evidence of a difference," which can also happen when the sample size is small.';
+function card(sig, body){
+  const cls = sig === null ? '' : (sig ? 'sig' : 'ns');
+  return `<div class="interp ${cls}"><h4>📖 Interpretation of this result (significance level α = 0.05)</h4>${body}</div>`;
+}
+function h0(t){ return `<div><b>Null hypothesis H₀:</b> "${t}"</div>`; }
+function judge(p, rej, keep){
+  return p < 0.05
+    ? `<div><b>Decision:</b> ${pj(p)} is less than 0.05 → we <b>reject</b> H₀. That is, ${rej}</div>`
+    : `<div><b>Decision:</b> ${pj(p)} is 0.05 or greater → we <b>cannot reject</b> H₀. ${keep}</div>`;
+}
+
+const INTERPRET = {
+  two: kv => {
+    const p = Pn(kv.p_t); if (p === null) return '';
+    const pw = Pn(kv.p_w), m1 = Pn(kv.m1), m2 = Pn(kv.m2);
+    const dir = (m1 !== null && m2 !== null)
+      ? `In the data, ${escHtml(kv.g2)} (mean ${g4(kv.m2)}) tends to be ${m2 > m1 ? 'higher' : 'lower'} than ${escHtml(kv.g1)} (mean ${g4(kv.m1)}).` : '';
+    let extra = '';
+    if (pw !== null && ((p < 0.05) !== (pw < 0.05)))
+      extra = `<div>⚠ The t test and the Wilcoxon test (${pj(pw)}) lead to different conclusions. Check the distribution for skew using Shapiro-Wilk and the histogram, and if it is skewed, give priority to Wilcoxon.</div>`;
+    else if (pw !== null)
+      extra = `<div>The Wilcoxon test (${pj(pw)}) reaches the same conclusion, so the result is robust to distributional assumptions.</div>`;
+    return card(p < 0.05,
+      h0(`The population means of ${escHtml(kv.g1)} and ${escHtml(kv.g2)} are equal (no difference between the two groups)`) +
+      judge(p, `we can conclude that "there is a statistically significant difference between the means of the two groups." ${dir}`, NS_NOTE) + extra +
+      `<div style="opacity:.85">※ Statistical significance and the size of the difference (its clinical meaning) are separate things. Also check and report the mean difference and its 95% confidence interval.</div>`);
+  },
+  paired: kv => {
+    const p = Pn(kv.p_t); if (p === null) return '';
+    const pw = Pn(kv.p_w), md = Pn(kv.mdiff), psh = Pn(kv.p_sh);
+    const dir = md !== null ? `On average it ${md > 0 ? 'increased' : 'decreased'} by ${g4(Math.abs(md))}.` : '';
+    let pref = '';
+    if (psh !== null && psh < 0.05)
+      pref = `<div>⚠ Because the distribution of the differences may deviate from normality (Shapiro-Wilk ${pj(psh)}), we recommend <b>relying primarily on the Wilcoxon signed-rank test result (${pw !== null ? pj(pw) : '—'})</b>.</div>`;
+    return card(p < 0.05,
+      h0('There is no change in the population mean from before to after (mean of the differences = 0)') +
+      judge(p, `we can conclude that "the value changed in a statistically significant way from before to after." ${dir}`, NS_NOTE) + pref);
+  },
+  multi: kv => {
+    const p = Pn(kv.p_anova); if (p === null) return '';
+    const pkw = Pn(kv.p_kw), k = Pn(kv.k), ns = Pn(kv.nsig);
+    let tukey = '';
+    if (p < 0.05) tukey = ns > 0
+      ? `<div>In the Tukey HSD, <b>${ns} pair(s)</b> were significant (p adj &lt; 0.05). Check the table above to see which pairs.</div>`
+      : `<div>However, no pairs were significant in the Tukey HSD (there is an overall difference, but it cannot be narrowed down to a specific pair).</div>`;
+    let kwn = '';
+    if (pkw !== null && ((p < 0.05) !== (pkw < 0.05)))
+      kwn = `<div>⚠ ANOVA and Kruskal-Wallis (${pj(pkw)}) lead to different conclusions. If the distribution is skewed, give priority to Kruskal-Wallis.</div>`;
+    return card(p < 0.05,
+      h0(`The population means of all ${k ?? ''} groups are equal`) +
+      judge(p, 'we can conclude that "there is a difference between at least one pair of groups" (ANOVA alone does not tell you which pair).', NS_NOTE) + tukey + kwn);
+  },
+  cat: kv => {
+    const pc = Pn(kv.p_chi), pf = Pn(kv.p_fisher), me = Pn(kv.minexp);
+    if (pc === null) return '';
+    const useF = me !== null && me < 5 && pf !== null;
+    const p = useF ? pf : pc;
+    const which = useF
+      ? `<div>The minimum expected count is ${g4(kv.minexp)} (&lt; 5), so rather than the χ² test we <b>use the Fisher exact test result (${pj(pf)})</b>.</div>`
+      : `<div>All expected counts are sufficiently large, so the χ² test result is fine to use.</div>`;
+    return card(p < 0.05,
+      h0('The two variables are independent (no association)') + which +
+      judge(p, 'we can conclude that "there is a statistically significant association between the two variables." Check the row % to see which combinations are most common.',
+        'There was not enough evidence of an association.' ) +
+      `<div style="opacity:.85">※ An association does not mean a causal relationship.</div>`);
+  },
+  mcnemar: kv => {
+    const pex = Pn(kv.p_ex), pc = Pn(kv.p);
+    const p = pex !== null ? pex : pc;
+    if (p === null) return '';
+    let dir = '';
+    const a12 = Pn(kv.a12), a21 = Pn(kv.a21);
+    if (a12 !== null && a21 !== null && kv.l1 && kv.l2){
+      dir = `<div>Breakdown of the change: "${escHtml(kv.l1)}→${escHtml(kv.l2)}" in ${a12} subject(s), "${escHtml(kv.l2)}→${escHtml(kv.l1)}" in ${a21} subject(s). ${a12 === a21 ? 'The two directions are equal in number.' : `Change in the <b>${a12 > a21 ? escHtml(kv.l1)+'→'+escHtml(kv.l2) : escHtml(kv.l2)+'→'+escHtml(kv.l1)}</b> direction predominates.`}</div>`;
+    }
+    const note = pex !== null ? `<div>Because there are few discordant pairs, the decision is based on the binomial (exact) test p value.</div>` : '';
+    return card(p < 0.05,
+      h0('The proportion has not changed from before to after (changes in both directions occur with equal frequency)') +
+      judge(p, 'we can conclude that "the proportion changed in a statistically significant way from before to after."', NS_NOTE) + dir + note);
+  },
+  cor: kv => {
+    const r = Pn(kv.r), pp = Pn(kv.p_p), rho = Pn(kv.rho), ps = Pn(kv.p_s);
+    if (r === null || pp === null) return '';
+    const ar = Math.abs(r);
+    const strength = ar < 0.2 ? 'very weak' : ar < 0.4 ? 'weak' : ar < 0.7 ? 'moderate' : 'strong';
+    const dir = r > 0 ? 'positive (the larger one is, the larger the other)' : 'negative (the larger one is, the smaller the other)';
+    let sp = '';
+    if (rho !== null && ps !== null && ((pp < 0.05) !== (ps < 0.05)))
+      sp = `<div>⚠ Pearson and Spearman (ρ = ${g4(kv.rho)}, ${pj(ps)}) lead to different conclusions. Check the scatter plot for outliers or a curvilinear relationship.</div>`;
+    return card(pp < 0.05,
+      h0('There is no correlation between the two variables (population correlation coefficient ρ = 0)') +
+      judge(pp, `we can conclude that "there is a correlation." r = ${g4(kv.r)} indicates a <b>${strength} ${dir} correlation</b>.`, 'There was not enough evidence of a correlation.') + sp +
+      `<div style="opacity:.85">※ Correlation does not imply causation. Always check the influence of outliers in the scatter plot as well.</div>`);
+  },
+  surv: kv => {
+    const plr = Pn(kv.p_logrank);
+    if (plr === null) return '';
+    let hrtxt = '';
+    const hr = Pn(kv.hr), lo = Pn(kv.lo), hi = Pn(kv.hi);
+    if (hr !== null && lo !== null && hi !== null && kv.ref && kv.cmp){
+      const pct = Math.abs(Math.round((1 - hr) * 100));
+      const sigHR = !(lo <= 1 && hi >= 1);
+      hrtxt = `<div><b>Hazard ratio:</b> ${escHtml(kv.cmp)} relative to ${escHtml(kv.ref)} has HR = ${g4(kv.hr)} (95% CI ${g4(kv.lo)}–${g4(kv.hi)}). `
+        + (hr < 1 ? `This estimates that the event is about <b>${pct}% less likely</b>` : `This estimates that the event is about <b>${Math.round((hr-1)*100)}% more likely</b>`)
+        + `. The 95% CI ${sigHR ? 'does <b>not</b> cross 1, so it is statistically significant' : '<b>crosses</b> 1, so it cannot be called significant'}.</div>`;
+    }
+    let zph = '';
+    const pz = Pn(kv.p_zph);
+    if (pz !== null && pz < 0.05)
+      zph = `<div>⚠ The test of proportional hazards is significant at ${pj(pz)}. The Cox model's assumption that "the HR is constant over time" may not hold (check for crossing of the KM curves and interpret with caution).</div>`;
+    return card(plr < 0.05,
+      h0('There is no difference between groups in the survival curves (the likelihood of an event)') +
+      judge(plr, 'we can conclude that "there is a statistically significant difference in survival between groups" (log-rank test).', NS_NOTE) + hrtxt + zph);
+  },
+  roc: kv => {
+    const auc = Pn(kv.auc), lo = Pn(kv.lo), hi = Pn(kv.hi);
+    if (auc === null) return '';
+    const grade = auc < 0.6 ? 'almost no discrimination' : auc < 0.7 ? 'limited discrimination' : auc < 0.8 ? 'acceptable discrimination' : auc < 0.9 ? 'good discrimination' : 'excellent discrimination';
+    const sig = lo !== null && lo > 0.5;
+    let cut = '';
+    if (kv.thr !== undefined && kv.sens && kv.spec)
+      cut = `<div><b>Cutoff:</b> using ${g4(kv.thr)} as the threshold gives sensitivity ${Math.round(Pn(kv.sens)*100)}% / specificity ${Math.round(Pn(kv.spec)*100)}% (the point that maximizes sensitivity + specificity). For screening where you want to reduce missed cases, consider a different, higher-sensitivity cutoff; for confirmatory diagnosis, consider a higher-specificity cutoff.</div>`;
+    return card(sig,
+      `<div><b>AUC = ${g4(kv.auc)}</b> (95% CI ${g4(kv.lo)}–${g4(kv.hi)}) → <b>${grade}</b> (0.5 = same as chance, 1.0 = perfect discrimination).</div>` +
+      `<div>${sig
+        ? 'Because the lower bound of the 95% CI exceeds 0.5, we can statistically say there is "better-than-chance discrimination."'
+        : 'Because the 95% CI includes 0.5, we cannot go so far as to say there is "better-than-chance discrimination."'}</div>` + cut +
+      `<div style="opacity:.85">※ A cutoff chosen on the same data tends to overestimate performance. If possible, validate it on a separate dataset.</div>`);
+  },
+};
+
+const ANALYSES = [
+  { id:'desc', label:'Descriptive statistics', desc:'Produces summary statistics for the selected variables (mean, SD, median, quartiles, number of missing values, etc.).',
+    fields:[ {key:'vars', label:'Variables (multiple selection allowed)', kind:'multi', filter:'all'} ],
+    plot:true },
+  { id:'table1', label:'Table 1 (characteristics)', desc:'Automatically generates an EZR-style patient characteristics table (Table 1) for a paper. Numeric variables are summarized as mean (SD) or median [IQR], categorical variables as n (%). Choosing a grouping variable adds a between-group p value.',
+    fields:[
+      {key:'vars', label:'Variables to include (all variables selected by default)', kind:'multi', filter:'all', selectAll:true},
+      {key:'g', label:'Grouping variable (optional; adds per-group columns and p values)', kind:'single', filter:'all'},
+    ],
+    opts:[ {key:'np', label:'Show numeric variables as median [IQR] (use nonparametric tests)', def:false} ],
+    plot:false },
+  { id:'two', label:'Two-group comparison', desc:'Compares a continuous variable between two groups. Also checks normality (Shapiro-Wilk) and equality of variances (F test).',
+    fields:[
+      {key:'y', label:'Outcome (continuous variable)', kind:'single', filter:'num'},
+      {key:'g', label:'Grouping variable (2 levels)', kind:'single', filter:'all'},
+    ],
+    opts:[ {key:'welch', label:"Welch's correction (does not assume equal variances; recommended)", def:true},
+           {key:'wilcox', label:'Also run the Wilcoxon rank-sum test', def:true} ],
+    plot:true },
+  { id:'paired', label:'Paired comparison', desc:'Comparison of paired continuous values, such as before/after measurements on the same subjects. Performs a paired t test and the Wilcoxon signed-rank test.',
+    fields:[
+      {key:'a', label:'Variable 1 (before)', kind:'single', filter:'num'},
+      {key:'b', label:'Variable 2 (after)', kind:'single', filter:'num'},
+    ], plot:true },
+  { id:'multi', label:'Multi-group comparison', desc:'Comparison of a continuous variable across three or more groups. Performs one-way ANOVA + Tukey HSD, and the Kruskal-Wallis test.',
+    fields:[
+      {key:'y', label:'Outcome (continuous variable)', kind:'single', filter:'num'},
+      {key:'g', label:'Grouping variable (3 or more levels)', kind:'single', filter:'all'},
+    ], plot:true },
+  { id:'cat', label:'Contingency table test', desc:'Cross-tabulates two categorical variables and performs the χ² test and the Fisher exact test.',
+    fields:[
+      {key:'a', label:'Variable 1 (rows)', kind:'single', filter:'all'},
+      {key:'b', label:'Variable 2 (columns)', kind:'single', filter:'all'},
+    ], plot:true },
+  { id:'mcnemar', label:'McNemar test', desc:'Performs the McNemar test for two paired categorical variables (a two-time-point comparison on the same subjects, such as response before and after treatment).',
+    fields:[
+      {key:'a', label:'Variable 1 (before)', kind:'single', filter:'all'},
+      {key:'b', label:'Variable 2 (after)', kind:'single', filter:'all'},
+    ], plot:false },
+  { id:'surv', label:'Survival analysis', desc:'Kaplan-Meier curve, log-rank test, and Cox proportional hazards model (HR with 95% CI, plus a test of proportional hazards). The survival package is downloaded automatically on first run (your data is not transmitted).',
+    fields:[
+      {key:'time', label:'Time variable (follow-up time)', kind:'single', filter:'num'},
+      {key:'event', label:'Event variable (0/1 or 2 levels)', kind:'single', filter:'all'},
+      {key:'g', label:'Grouping variable (optional; if left blank, an overall KM curve)', kind:'single', filter:'all'},
+      {key:'covs', label:'Adjustment covariates for Cox regression (optional; multiple selection allowed)', kind:'multi', filter:'all'},
+    ], plot:true },
+  { id:'cor', label:'Correlation', desc:'Correlation (Pearson / Spearman) between two continuous variables, with a scatter plot.',
+    fields:[
+      {key:'x', label:'Variable X', kind:'single', filter:'num'},
+      {key:'y', label:'Variable Y', kind:'single', filter:'num'},
+    ], plot:true },
+  { id:'lm', label:'Linear regression', desc:'Multiple linear regression (lm). Outputs coefficients, 95% confidence intervals, and the coefficient of determination.',
+    fields:[
+      {key:'y', label:'Response variable (continuous)', kind:'single', filter:'num'},
+      {key:'x', label:'Explanatory variables (multiple selection allowed)', kind:'multi', filter:'all'},
+    ], plot:false },
+  { id:'glm', label:'Logistic regression', desc:'Logistic regression for a binary outcome (glm, binomial). Outputs odds ratios and 95% CIs.',
+    fields:[
+      {key:'y', label:'Response variable (binary)', kind:'single', filter:'all'},
+      {key:'x', label:'Explanatory variables (multiple selection allowed)', kind:'multi', filter:'all'},
+    ], plot:false },
+  { id:'roc', label:'ROC curve', desc:'Evaluates how well a continuous test or marker discriminates a binary outcome. Computes the AUC (95% CI) and the optimal cutoff (Youden index) with its sensitivity and specificity.',
+    fields:[
+      {key:'y', label:'Outcome (binary)', kind:'single', filter:'all'},
+      {key:'x', label:'Test value / marker (continuous variable)', kind:'single', filter:'num'},
+    ], plot:true },
+  { id:'synth', label:'🎲 Generate dummy data', desc:'Creates a fake-data CSV that you can safely hand to a generative AI (ChatGPT, etc.). For categorical variables it creates dummy labels of the form "column name + sequential number" (e.g., Doctor1, Doctor2…), one per category, and assigns them at random (binary variables such as present/absent keep their original labels); date/time columns become random dates within the original span; and numeric variables are generated at random within their Min–Max range (the distribution is not reproduced). Missing values (empty cells) are reproduced at the same proportion. A download button appears after generation.',
+    fields:[],
+    plot:false },
+];
+
+let currentTab = null;
+
+function renderTabs(){
+  const t = document.getElementById('tabs');
+  t.innerHTML = '';
+  ANALYSES.forEach(a => {
+    const b = document.createElement('button');
+    b.className = 'tab' + (a.id === currentTab ? ' active' : '');
+    b.textContent = a.label;
+    b.onclick = () => selectTab(a.id);
+    t.appendChild(b);
+  });
+}
+
+function optionList(filter){
+  return columns.filter(c => filter === 'all' || c.type === filter);
+}
+
+function selectTab(id){
+  currentTab = id;
+  renderTabs();
+  const a = ANALYSES.find(x => x.id === id);
+  const cfg = document.getElementById('config');
+  if (!dataLoaded){ cfg.innerHTML = '<div class="placeholder">Please load a CSV first</div>'; return; }
+  let html = `<div class="desc">${a.desc}</div>`;
+  if (HELP[a.id]){
+    html += `<button class="helpbtn" id="helpBtn" type="button">？ New here? — how to use and read this analysis</button>
+      <div class="helpbox" id="helpBox" hidden>${HELP[a.id]}</div>`;
+  }
+  a.fields.forEach(f => {
+    const opts = optionList(f.filter).map(c => `<option value="${escHtml(c.name)}" ${f.selectAll ? 'selected' : ''}>${escHtml(c.name)}</option>`).join('');
+    html += `<div class="field">
+      <label>${f.label}</label>
+      <select id="f_${f.key}" ${f.kind === 'multi' ? 'multiple' : ''}>${f.kind === 'single' ? '<option value="">— Select —</option>' : ''}${opts}</select>
+      ${f.kind === 'multi' ? '<span class="hint">Ctrl/⌘-click to select multiple</span>' : ''}
+    </div>`;
+  });
+  if (a.opts){
+    html += '<div class="optrow">' + a.opts.map(o =>
+      `<label><input type="checkbox" id="o_${o.key}" ${o.def ? 'checked' : ''}>${o.label}</label>`).join('') + '</div>';
+  }
+  html += `<button class="runbtn" id="runBtn" ${ready ? '' : 'disabled'}><span class="play">▶</span> Run analysis in R</button>`;
+  cfg.innerHTML = html;
+  const hb = document.getElementById('helpBtn');
+  if (hb) hb.onclick = () => {
+    const box = document.getElementById('helpBox');
+    box.hidden = !box.hidden;
+    hb.textContent = box.hidden ? '？ New here? — how to use and read this analysis' : '× Close help';
+  };
+  document.getElementById('runBtn').onclick = runAnalysis;
+  document.getElementById('results').innerHTML = '';
+  document.getElementById('codeNote').hidden = true;
+}
+
+function refreshRunButtons(){
+  const b = document.getElementById('runBtn');
+  if (b && dataLoaded) b.disabled = false;
+}
+
+/* =========================================================
+   R code generation
+========================================================= */
+function genCode(a){
+  const val = k => document.getElementById('f_' + k)?.value || '';
+  const vals = k => Array.from(document.getElementById('f_' + k)?.selectedOptions || []).map(o => o.value);
+  const opt = k => document.getElementById('o_' + k)?.checked;
+
+  if (a.id === 'desc'){
+    const vs = vals('vars');
+    if (!vs.length) return {err:'Please select at least one variable'};
+    let code = '';
+    vs.forEach(v => {
+      const c = columns.find(x => x.name === v);
+      code += `cat("\\n===== ${escR(v)} =====\\n")\n`;
+      if (c.type === 'num'){
+        code += `x <- ${col(v)}\n` +
+`cat(sprintf("n = %d, missing = %d\\n", sum(!is.na(x)), sum(is.na(x))))\n` +
+`cat(sprintf("mean = %.4g, SD = %.4g\\n", mean(x, na.rm=TRUE), sd(x, na.rm=TRUE)))\n` +
+`cat(sprintf("median = %.4g [IQR %.4g–%.4g], range %.4g–%.4g\\n",
+  median(x, na.rm=TRUE), quantile(x, .25, na.rm=TRUE), quantile(x, .75, na.rm=TRUE),
+  min(x, na.rm=TRUE), max(x, na.rm=TRUE)))\n` +
+`hist(x, main = "${escR(v)}", xlab = "${escR(v)}", col = "#9FC4E8", border = "white")\n`;
+      } else {
+        code += `print(table(${col(v)}, useNA = "ifany"))\n` +
+`print(round(prop.table(table(${col(v)})) * 100, 1))\n`;
+      }
+    });
+    return {code};
+  }
+
+  if (a.id === 'table1'){
+    const g = val('g');
+    let vs = vals('vars').filter(v => v !== g);
+    if (!vs.length) return {err:'Please select at least one variable'};
+    const varVec = 'c(' + vs.map(v => `"${escR(v)}"`).join(', ') + ')';
+    let code =
+`vars <- ${varVec}
+np <- ${opt('np') ? 'TRUE' : 'FALSE'}   # TRUE: median [IQR] + nonparametric tests
+fmt_p <- function(p) if (is.na(p)) "" else if (p < 0.001) "<0.001" else sprintf("%.3f", p)
+fmt_num <- function(z) {
+  z <- z[!is.na(z)]
+  if (length(z) == 0) return("-")
+  if (np) sprintf("%.4g [%.4g, %.4g]", median(z), quantile(z, .25), quantile(z, .75))
+  else    sprintf("%.4g (%.4g)", mean(z), sd(z))
+}
+`;
+    if (g){
+      code +=
+`grp <- droplevels(factor(${col(g)}))
+glv <- levels(grp)
+cols <- c("Overall", glv)
+blank <- setNames(rep("", length(cols)), cols)
+rows <- list()
+add <- function(label, vals = blank, p = "", test = "")
+  rows[[length(rows) + 1]] <<- c("Variable" = label, vals, "p value" = p, "Test" = test)
+
+add("n", setNames(as.character(c(nrow(df), as.integer(table(grp)[glv]))), cols))
+
+for (v in vars) {
+  x <- df[[v]]
+  if (is.numeric(x)) {
+    vals <- setNames(c(fmt_num(x), sapply(glv, function(l) fmt_num(x[!is.na(grp) & grp == l]))), cols)
+    ok <- !is.na(x) & !is.na(grp)
+    if (length(glv) == 2) {
+      if (np) { p <- wilcox.test(x[ok] ~ grp[ok])$p.value; ts <- "Wilcoxon" }
+      else    { p <- t.test(x[ok] ~ grp[ok])$p.value;      ts <- "Welch t" }
+    } else {
+      if (np) { p <- kruskal.test(x[ok] ~ grp[ok])$p.value; ts <- "Kruskal-Wallis" }
+      else    { p <- summary(aov(x[ok] ~ grp[ok]))[[1]][["Pr(>F)"]][1]; ts <- "ANOVA" }
+    }
+    add(paste0(v, if (np) ", median [IQR]" else ", mean (SD)"), vals, fmt_p(p), ts)
+  } else {
+    xf <- factor(x)
+    tab <- table(xf, grp)
+    p <- NA; ts <- ""
+    if (nrow(tab) >= 2 && ncol(tab) >= 2) {
+      ct <- suppressWarnings(chisq.test(tab))
+      if (any(ct$expected < 5) && nrow(tab) * ncol(tab) <= 20) {
+        ft <- try(fisher.test(tab, workspace = 2e6), silent = TRUE)
+        if (!inherits(ft, "try-error")) { p <- ft$p.value; ts <- "Fisher" }
+        else { p <- ct$p.value; ts <- "Chisq" }
+      } else { p <- ct$p.value; ts <- "Chisq" }
+    }
+    add(paste0(v, ", n (%)"), blank, fmt_p(p), ts)
+    n_all <- sum(!is.na(xf))
+    n_g <- table(grp[!is.na(xf)])
+    for (lv in levels(xf)) {
+      o <- sum(xf == lv, na.rm = TRUE)
+      vals <- setNames(c(sprintf("%d (%.1f)", o, 100 * o / max(n_all, 1)),
+        sapply(glv, function(l) {
+          k <- sum(xf == lv & !is.na(grp) & grp == l, na.rm = TRUE)
+          sprintf("%d (%.1f)", k, 100 * k / max(as.integer(n_g[l]), 1))
+        })), cols)
+      add(paste0("  ", lv), vals)
+    }
+  }
+}
+out <- as.data.frame(do.call(rbind, rows), check.names = FALSE)
+print(out, row.names = FALSE, right = FALSE)
+cat("@@TSV_BEGIN\\n"); write.table(out, sep = "\\t", row.names = FALSE, quote = FALSE); cat("@@TSV_END\\n")
+cat("\\nNote: numeric variables = ", if (np) "median [IQR], tests are Wilcoxon / Kruskal-Wallis" else "mean (SD), tests are Welch t / ANOVA",
+    ". Categorical variables = n (%), test is Chisq (Fisher if any cell has expected count < 5).\\n", sep = "")
+`;
+    } else {
+      code +=
+`rows <- list()
+add <- function(label, val)
+  rows[[length(rows) + 1]] <<- c("Variable" = label, "Overall" = val)
+
+add("n", as.character(nrow(df)))
+for (v in vars) {
+  x <- df[[v]]
+  if (is.numeric(x)) {
+    add(paste0(v, if (np) ", median [IQR]" else ", mean (SD)"), fmt_num(x))
+  } else {
+    xf <- factor(x); n_all <- sum(!is.na(xf))
+    add(paste0(v, ", n (%)"), "")
+    for (lv in levels(xf)) {
+      o <- sum(xf == lv, na.rm = TRUE)
+      add(paste0("  ", lv), sprintf("%d (%.1f)", o, 100 * o / max(n_all, 1)))
+    }
+  }
+}
+out <- as.data.frame(do.call(rbind, rows), check.names = FALSE)
+print(out, row.names = FALSE, right = FALSE)
+cat("@@TSV_BEGIN\\n"); write.table(out, sep = "\\t", row.names = FALSE, quote = FALSE); cat("@@TSV_END\\n")
+`;
+    }
+    return {code};
+  }
+
+  if (a.id === 'two'){
+    const y = val('y'), g = val('g');
+    if (!y || !g) return {err:'Please select the outcome and the grouping variable'};
+    let code =
+`y <- ${col(y)}
+g <- factor(${col(g)})
+ok <- complete.cases(y, g); y <- y[ok]; g <- droplevels(g[ok])
+stopifnot("The grouping variable must have exactly 2 levels" = nlevels(g) == 2)
+cat("Summary by group:\\n")
+print(tapply(y, g, function(v) c(n = length(v), mean = mean(v), sd = sd(v), median = median(v))))
+cat("\\nShapiro-Wilk normality test (by group):\\n")
+for (lv in levels(g)) {
+  v <- y[g == lv]
+  if (length(v) >= 3 && length(v) <= 5000) {
+    s <- shapiro.test(v); cat(sprintf("  %s: W = %.3f, p = %.4g\\n", lv, s$statistic, s$p.value))
+  }
+}
+cat("\\nEquality of variances (F test):\\n"); print(var.test(y ~ g))
+cat("\\nt test:\\n"); tt <- t.test(y ~ g, var.equal = ${opt('welch') ? 'FALSE' : 'TRUE'}); print(tt)
+m <- tapply(y, g, mean)
+cat(sprintf("@@KV p_t=%.6g\\n@@KV g1=%s\\n@@KV g2=%s\\n@@KV m1=%.6g\\n@@KV m2=%.6g\\n", tt$p.value, levels(g)[1], levels(g)[2], m[1], m[2]))
+`;
+    if (opt('wilcox')) code += `cat("\\nWilcoxon rank-sum test:\\n"); wt <- suppressWarnings(wilcox.test(y ~ g)); print(wt)
+cat(sprintf("@@KV p_w=%.6g\\n", wt$p.value))
+`;
+    code += `boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "${escR(y)}", col = c("#9FC4E8", "#F2C9A0"))\n`;
+    return {code};
+  }
+
+  if (a.id === 'multi'){
+    const y = val('y'), g = val('g');
+    if (!y || !g) return {err:'Please select the outcome and the grouping variable'};
+    return {code:
+`y <- ${col(y)}
+g <- factor(${col(g)})
+ok <- complete.cases(y, g); y <- y[ok]; g <- droplevels(g[ok])
+cat(sprintf("Number of groups: %d\\nSummary by group:\\n", nlevels(g)))
+print(tapply(y, g, function(v) c(n = length(v), mean = mean(v), sd = sd(v))))
+cat("\\nOne-way ANOVA:\\n")
+fit <- aov(y ~ g); sm <- summary(fit); print(sm)
+cat("\\nTukey HSD (multiple comparisons):\\n"); tk <- TukeyHSD(fit); print(tk)
+cat("\\nKruskal-Wallis test:\\n"); kw <- kruskal.test(y ~ g); print(kw)
+cat(sprintf("@@KV p_anova=%.6g\\n@@KV p_kw=%.6g\\n@@KV k=%d\\n@@KV nsig=%d\\n",
+  sm[[1]][["Pr(>F)"]][1], kw$p.value, nlevels(g), sum(tk$g[, "p adj"] < 0.05)))
+boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "${escR(y)}", col = "#9FC4E8")
+`};
+  }
+
+  if (a.id === 'cat'){
+    const A = val('a'), B = val('b');
+    if (!A || !B) return {err:'Please select two variables'};
+    return {code:
+`tab <- table(${col(A)}, ${col(B)})
+cat("Cross-tabulation:\\n"); print(tab)
+cat("\\nRow %:\\n"); print(round(prop.table(tab, 1) * 100, 1))
+cat("\\nχ² test:\\n"); ct <- suppressWarnings(chisq.test(tab)); print(ct)
+cat("Expected counts:\\n"); print(round(ct$expected, 2))
+fis <- try(fisher.test(tab), silent = TRUE)
+if (!inherits(fis, "try-error")) { cat("\\nFisher exact test:\\n"); print(fis)
+  cat(sprintf("@@KV p_fisher=%.6g\\n", fis$p.value)) } else
+  cat("\\nFisher exact test: omitted because the table is too large\\n")
+cat(sprintf("@@KV p_chi=%.6g\\n@@KV minexp=%.4g\\n", ct$p.value, min(ct$expected)))
+mosaicplot(tab, main = "${escR(A)} × ${escR(B)}", color = c("#9FC4E8","#F2C9A0","#BFD8B8","#D8B8D8","#E8D49F"))
+`};
+  }
+
+  if (a.id === 'mcnemar'){
+    const A = val('a'), B = val('b');
+    if (!A || !B) return {err:'Please select two variables'};
+    if (A === B) return {err:'Please select two different variables'};
+    return {code:
+`a <- ${col(A)}; b <- ${col(B)}
+ok <- complete.cases(a, b)
+u <- sort(unique(c(as.character(a[ok]), as.character(b[ok]))))
+a <- factor(as.character(a[ok]), levels = u)
+b <- factor(as.character(b[ok]), levels = u)
+tab <- table(a, b, dnn = c("${escR(A)}", "${escR(B)}"))
+cat(sprintf("Number of paired observations: n = %d\\n\\nCross-tabulation:\\n", sum(ok)))
+print(tab)
+cat("\\nDiscordant pairs (these off-diagonal cells are what drive the test):\\n")
+print(tab * (1 - diag(nrow(tab))))
+cat("\\nMcNemar test (with continuity correction):\\n"); mc <- mcnemar.test(tab); print(mc)
+cat("McNemar test (without correction):\\n"); print(mcnemar.test(tab, correct = FALSE))
+cat(sprintf("@@KV p=%.6g\\n", mc$p.value))
+if (nrow(tab) == 2) {
+  cat(sprintf("@@KV l1=%s\\n@@KV l2=%s\\n@@KV a12=%d\\n@@KV a21=%d\\n", u[1], u[2], tab[1,2], tab[2,1]))
+  d <- tab[1,2] + tab[2,1]
+  if (d > 0 && d <= 25) {
+    cat("Because there are few discordant pairs, the exact binomial test is also shown:\\n")
+    bt <- binom.test(tab[1,2], d, p = 0.5); print(bt)
+    cat(sprintf("@@KV p_ex=%.6g\\n", bt$p.value))
+  }
+}
+`};
+  }
+
+  if (a.id === 'surv'){
+    const t = val('time'), evt = val('event'), g = val('g');
+    const covs = vals('covs').filter(c => c !== t && c !== evt && c !== g);
+    if (!t || !evt) return {err:'Please select the time variable and the event variable'};
+    const bq = s => '`' + s.replace(/`/g, '') + '`';
+    const FP =
+`fp <- function(m, xlab) {
+  m <- m[is.finite(m[,1]) & is.finite(m[,2]) & is.finite(m[,3]), , drop = FALSE]
+  k <- nrow(m); if (k == 0) return(invisible())
+  layout(1); par(mar = c(4, 11, 2, 2))
+  xl <- c(min(c(m, 1)) * 0.8, max(c(m, 1)) * 1.25)
+  plot(NA, xlim = xl, ylim = c(0.5, k + 0.5), log = "x", yaxt = "n",
+       xlab = xlab, ylab = "", main = "Forest plot")
+  abline(v = 1, lty = 2, col = "grey55")
+  for (i in 1:k) {
+    yy <- k - i + 1
+    segments(m[i,2], yy, m[i,3], yy, lwd = 2, col = "#276DC3")
+    points(m[i,1], yy, pch = 18, cex = 1.5, col = "#1B4F8F")
+  }
+  axis(2, at = k:1, labels = rownames(m), las = 1, cex.axis = .8)
+}
+`;
+    let code =
+`if (!requireNamespace("survival", quietly = TRUE)) webr::install("survival")
+suppressMessages(library(survival))
+tm <- ${col(t)}
+e_raw <- ${col(evt)}
+if (is.numeric(e_raw)) {
+  ev <- as.integer(e_raw)
+  stopifnot("The event variable must be 0/1" = all(ev %in% c(0L, 1L), na.rm = TRUE))
+} else {
+  f <- factor(e_raw)
+  stopifnot("The event variable must have exactly 2 levels" = nlevels(droplevels(f[!is.na(f)])) == 2)
+  ev <- as.integer(f) - 1L
+  cat(sprintf("Event definition: %s = 0 (censored), %s = 1 (event occurred)\\n\\n", levels(f)[1], levels(f)[2]))
+}
+d <- data.frame(.time = tm, .event = ev, check.names = FALSE)
+`;
+    if (g) code += `d[["${escR(g)}"]] <- factor(${col(g)})\n`;
+    covs.forEach(c => { code += `d[["${escR(c)}"]] <- ${col(c)}\n`; });
+    code += `d <- d[complete.cases(d), ]
+cat(sprintf("Analysis set: n = %d (cases with no missing values across all selected variables), number of events = %d\\n\\n", nrow(d), sum(d$.event)))
+`;
+    if (g){
+      const rhs = [bq(g), ...covs.map(bq)].join(' + ');
+      code +=
+`grp <- droplevels(factor(d[["${escR(g)}"]]))
+glv <- levels(grp)
+fit <- survfit(Surv(d$.time, d$.event) ~ grp)
+cat("Kaplan-Meier summary (by group; median survival and 95% CI):\\n"); print(fit)
+sdf <- survdiff(Surv(d$.time, d$.event) ~ grp)
+cat("\\nLog-rank test:\\n"); print(sdf)
+p_lr <- 1 - pchisq(sdf$chisq, length(sdf$n) - 1)
+cat("\\nCox proportional hazards model${covs.length ? ' (HR adjusted for covariates)' : ''}:\\n")
+cx <- coxph(Surv(.time, .event) ~ ${rhs}, data = d)
+print(summary(cx))
+hr <- exp(cbind(HR = coef(cx), suppressMessages(confint(cx))))
+cat("Hazard ratios and 95% confidence intervals:\\n"); print(round(hr, 3))
+zp <- cox.zph(cx)
+cat("\\nTest of proportional hazards (Schoenfeld residuals; p < 0.05 casts doubt on the assumption):\\n"); print(zp)
+cat(sprintf("@@KV p_logrank=%.6g\\n@@KV p_zph=%.6g\\n", p_lr, zp$table["GLOBAL", "p"]))
+if (nlevels(grp) == 2)
+  cat(sprintf("@@KV hr=%.6g\\n@@KV lo=%.6g\\n@@KV hi=%.6g\\n@@KV ref=%s\\n@@KV cmp=%s\\n",
+    hr[1,1], hr[1,2], hr[1,3], glv[1], glv[2]))
+# --- KM curve + Number at risk ---
+cols <- c("#276DC3", "#C0392B", "#1E7F4F", "#7A4E1D", "#6C3FA0")[seq_along(glv)]
+tp <- pretty(c(0, max(d$.time))); tp <- tp[tp >= 0 & tp <= max(d$.time) * 1.001]
+layout(matrix(1:2, ncol = 1), heights = c(3, 1.2 + 0.25 * length(glv)))
+par(mar = c(2.5, 5.5, 2, 2))
+plot(fit, col = cols, lwd = 2, xlim = range(tp), xlab = "", ylab = "Survival probability",
+     main = "Kaplan-Meier", mark.time = TRUE)
+legend("bottomleft", legend = glv, col = cols, lwd = 2, bty = "n", cex = .85)
+sf <- summary(fit, times = tp, extend = TRUE)
+par(mar = c(2.2, 5.5, .5, 2))
+plot.new(); plot.window(xlim = range(tp), ylim = c(0, length(glv) + 1.4))
+text(min(tp), length(glv) + 1, "Number at risk", adj = 0, font = 2, cex = .8, xpd = NA)
+st <- if (length(glv) == 1) rep(1L, length(sf$time)) else as.integer(sf$strata)
+for (i in seq_along(glv))
+  text(sf$time[st == i], length(glv) - i + 1, sf$n.risk[st == i], cex = .8, col = cols[i], xpd = NA)
+axis(2, at = length(glv):1, labels = glv, las = 1, tick = FALSE, cex.axis = .75)
+axis(1, at = tp, cex.axis = .7)
+layout(1)
+`;
+      if (covs.length) code += FP + `fp(hr, "Hazard ratio (log scale)")\n`;
+    } else {
+      code +=
+`fit <- survfit(Surv(d$.time, d$.event) ~ 1)
+cat("Kaplan-Meier summary (median survival and 95% CI):\\n"); print(fit)
+tp <- pretty(c(0, max(d$.time))); tp <- tp[tp >= 0 & tp <= max(d$.time) * 1.001]
+layout(matrix(1:2, ncol = 1), heights = c(3, 1.3))
+par(mar = c(2.5, 5.5, 2, 2))
+plot(fit, col = "#276DC3", lwd = 2, conf.int = TRUE, mark.time = TRUE, xlim = range(tp),
+     xlab = "", ylab = "Survival probability", main = "Kaplan-Meier")
+sf <- summary(fit, times = tp, extend = TRUE)
+par(mar = c(2.2, 5.5, .5, 2))
+plot.new(); plot.window(xlim = range(tp), ylim = c(0, 2.4))
+text(min(tp), 2, "Number at risk", adj = 0, font = 2, cex = .8, xpd = NA)
+text(sf$time, 1, sf$n.risk, cex = .8, col = "#276DC3", xpd = NA)
+axis(1, at = tp, cex.axis = .7)
+layout(1)
+`;
+      if (covs.length){
+        const rhs2 = covs.map(bq).join(' + ');
+        code +=
+`cat("\\nCox proportional hazards model:\\n")
+cx <- coxph(Surv(.time, .event) ~ ${rhs2}, data = d)
+print(summary(cx))
+hr <- exp(cbind(HR = coef(cx), suppressMessages(confint(cx))))
+cat("Hazard ratios and 95% confidence intervals:\\n"); print(round(hr, 3))
+cat("\\nTest of proportional hazards:\\n"); print(cox.zph(cx))
+` + FP + `fp(hr, "Hazard ratio (log scale)")\n`;
+      }
+    }
+    return {code};
+  }
+
+  if (a.id === 'paired'){
+    const A = val('a'), B = val('b');
+    if (!A || !B) return {err:'Please select the before and after variables'};
+    if (A === B) return {err:'Please select two different variables'};
+    return {code:
+`x1 <- ${col(A)}  # before
+x2 <- ${col(B)}  # after
+ok <- complete.cases(x1, x2); x1 <- x1[ok]; x2 <- x2[ok]
+d <- x2 - x1
+cat(sprintf("Number of pairs n = %d\\nBefore: mean %.4g (SD %.4g)\\nAfter:  mean %.4g (SD %.4g)\\nDifference (after - before): mean %.4g (SD %.4g)\\n",
+  length(d), mean(x1), sd(x1), mean(x2), sd(x2), mean(d), sd(d)))
+if (length(d) >= 3 && length(d) <= 5000) {
+  s <- shapiro.test(d)
+  cat(sprintf("\\nShapiro-Wilk normality test of the differences: W = %.3f, p = %.4g\\n", s$statistic, s$p.value))
+  cat(sprintf("@@KV p_sh=%.6g\\n", s$p.value))
+}
+cat("\\nPaired t test:\\n"); tt <- t.test(x2, x1, paired = TRUE); print(tt)
+cat("\\nWilcoxon signed-rank test:\\n"); wt <- suppressWarnings(wilcox.test(x2, x1, paired = TRUE)); print(wt)
+cat(sprintf("@@KV p_t=%.6g\\n@@KV p_w=%.6g\\n@@KV mdiff=%.6g\\n@@KV n=%d\\n", tt$p.value, wt$p.value, mean(d), length(d)))
+boxplot(list(Before = x1, After = x2), col = c("#9FC4E8", "#F2C9A0"), main = "Before / After")
+hist(d, main = "Difference (After - Before)", xlab = "difference", col = "#9FC4E8", border = "white")
+abline(v = 0, lty = 2, lwd = 2, col = "#C0392B")
+`};
+  }
+
+  if (a.id === 'roc'){
+    const y = val('y'), x = val('x');
+    if (!y || !x) return {err:'Please select the outcome and the test value'};
+    return {code:
+`outc_raw <- ${col(y)}
+pred <- ${col(x)}
+f <- factor(outc_raw)
+ok <- complete.cases(pred, f); pred <- pred[ok]; f <- droplevels(f[ok])
+stopifnot("The outcome must be binary" = nlevels(f) == 2)
+outc <- as.integer(f) - 1L
+n1 <- sum(outc == 1); n0 <- sum(outc == 0)
+cat(sprintf("Definition of positive (event): %s = 1 (n = %d), %s = 0 (n = %d)\\n\\n", levels(f)[2], n1, levels(f)[1], n0))
+w <- suppressWarnings(wilcox.test(pred[outc == 1], pred[outc == 0]))
+auc <- as.numeric(w$statistic) / (n1 * n0)
+flip <- FALSE
+if (auc < 0.5) { flip <- TRUE; pred <- -pred; auc <- 1 - auc
+  cat("Note: lower test values tended to indicate positive cases, so the direction was flipped for the analysis.\\n\\n") }
+q1 <- auc / (2 - auc); q2 <- 2 * auc^2 / (1 + auc)
+se <- sqrt((auc * (1 - auc) + (n1 - 1) * (q1 - auc^2) + (n0 - 1) * (q2 - auc^2)) / (n1 * n0))
+lo <- max(0, auc - 1.96 * se); hi <- min(1, auc + 1.96 * se)
+cat(sprintf("AUC = %.3f (95%%CI: %.3f–%.3f, Hanley-McNeil method)\\n\\n", auc, lo, hi))
+th <- sort(unique(pred))
+sens <- sapply(th, function(t) mean(pred[outc == 1] >= t))
+spec <- sapply(th, function(t) mean(pred[outc == 0] < t))
+bi <- which.max(sens + spec - 1)
+bt <- if (flip) -th[bi] else th[bi]
+cat(sprintf("Optimal cutoff (Youden index): %.4g %s\\n  sensitivity = %.1f%%, specificity = %.1f%%\\n",
+  bt, if (flip) "(values at or below this are classified positive)" else "(values at or above this are classified positive)", 100 * sens[bi], 100 * spec[bi]))
+cat(sprintf("@@KV auc=%.6g\\n@@KV lo=%.6g\\n@@KV hi=%.6g\\n@@KV thr=%.6g\\n@@KV sens=%.4g\\n@@KV spec=%.4g\\n",
+  auc, lo, hi, bt, sens[bi], spec[bi]))
+o <- order(1 - spec, sens)
+plot(c(0, (1 - spec)[o], 1), c(0, sens[o], 1), type = "l", lwd = 2, col = "#276DC3",
+     xlab = "1 - Specificity", ylab = "Sensitivity", main = sprintf("ROC curve (AUC = %.3f)", auc))
+abline(0, 1, lty = 2, col = "grey60")
+points(1 - spec[bi], sens[bi], pch = 19, cex = 1.2, col = "#C0392B")
+`};
+  }
+
+  if (a.id === 'cor'){
+    const x = val('x'), y = val('y');
+    if (!x || !y) return {err:'Please select variables X and Y'};
+    return {code:
+`x <- ${col(x)}; y <- ${col(y)}
+ok <- complete.cases(x, y); x <- x[ok]; y <- y[ok]
+cat(sprintf("n = %d\\n\\nPearson correlation:\\n", length(x)))
+pe <- cor.test(x, y, method = "pearson"); print(pe)
+cat("\\nSpearman correlation:\\n")
+sp <- suppressWarnings(cor.test(x, y, method = "spearman")); print(sp)
+cat(sprintf("@@KV r=%.6g\\n@@KV p_p=%.6g\\n@@KV rho=%.6g\\n@@KV p_s=%.6g\\n@@KV n=%d\\n",
+  pe$estimate, pe$p.value, sp$estimate, sp$p.value, length(x)))
+plot(x, y, xlab = "${escR(x)}", ylab = "${escR(y)}", pch = 19, col = "#276DC3AA",
+     main = sprintf("r = %.3f", cor(x, y)))
+abline(lm(y ~ x), col = "#C0392B", lwd = 2)
+`};
+  }
+
+  if (a.id === 'lm' || a.id === 'glm'){
+    const y = val('y'), xs = vals('x');
+    if (!y || !xs.length) return {err:'Please select the response and explanatory variables'};
+    if (xs.includes(y)) return {err:'The response variable is also included among the explanatory variables'};
+    const rhs = xs.map(v => '`' + v.replace(/`/g,'') + '`').join(' + ');
+    const lhs = '`' + y.replace(/`/g,'') + '`';
+    if (a.id === 'lm'){
+      return {code:
+`fit <- lm(${lhs} ~ ${rhs}, data = df)
+print(summary(fit))
+cat("\\n95% confidence intervals:\\n"); print(round(confint(fit), 4))
+cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
+`};
+    }
+    return {code:
+`yv <- factor(df[["${escR(y)}"]])
+stopifnot("The response variable must be binary" = nlevels(droplevels(yv[!is.na(yv)])) == 2)
+df$.outcome <- as.integer(yv) - 1L
+cat(sprintf("Outcome: %s=0, %s=1\\n\\n", levels(yv)[1], levels(yv)[2]))
+fit <- glm(.outcome ~ ${rhs}, data = df, family = binomial)
+print(summary(fit))
+or <- exp(cbind(OR = coef(fit), suppressMessages(confint(fit))))
+cat("\\nOdds ratios and 95% confidence intervals:\\n"); print(round(or, 3))
+cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
+fp <- function(m, xlab) {
+  m <- m[is.finite(m[,1]) & is.finite(m[,2]) & is.finite(m[,3]), , drop = FALSE]
+  k <- nrow(m); if (k == 0) return(invisible())
+  layout(1); par(mar = c(4, 11, 2, 2))
+  xl <- c(min(c(m, 1)) * 0.8, max(c(m, 1)) * 1.25)
+  plot(NA, xlim = xl, ylim = c(0.5, k + 0.5), log = "x", yaxt = "n",
+       xlab = xlab, ylab = "", main = "Forest plot")
+  abline(v = 1, lty = 2, col = "grey55")
+  for (i in 1:k) {
+    yy <- k - i + 1
+    segments(m[i,2], yy, m[i,3], yy, lwd = 2, col = "#276DC3")
+    points(m[i,1], yy, pch = 18, cex = 1.5, col = "#1B4F8F")
+  }
+  axis(2, at = k:1, labels = rownames(m), las = 1, cex.axis = .8)
+}
+if (nrow(or) > 1) fp(or[-1, , drop = FALSE], "Odds ratio (log scale)")
+`};
+  }
+
+  if (a.id === 'synth'){
+    return {code:
+`## ===== Dummy data generation (no real data values are output) =====
+set.seed(NULL)               # different random numbers each time
+n <- nrow(df)
+
+# Estimate the number of decimal places used in a numeric column (returns 0 for an integer column)
+n_dec <- function(v) {
+  v <- v[is.finite(v)]
+  if (!length(v)) return(0L)
+  for (p in 0:6) if (all(abs(v * 10^p - round(v * 10^p)) < 1e-9)) return(p)
+  6L
+}
+
+# --- Detection of date/datetime/time ---------------------------------------
+# Try candidate formats from "specific to general"; if 90%+ parse, treat the column as that type
+dt_parse <- function(v, kind, fmt) {
+  v <- as.character(v)
+  if (kind == "time")
+    suppressWarnings(as.POSIXct(paste("1970-01-01", v), format = paste("%Y-%m-%d", fmt), tz = "UTC"))
+  else
+    suppressWarnings(as.POSIXct(v, format = fmt, tz = "UTC"))
+}
+DT_CAND <- list(
+  c("datetime", "%Y-%m-%d %H:%M:%S"), c("datetime", "%Y/%m/%d %H:%M:%S"),
+  c("datetime", "%Y-%m-%d %H:%M"),    c("datetime", "%Y/%m/%d %H:%M"),
+  c("date", "%Y-%m-%d"), c("date", "%Y/%m/%d"), c("date", "%Y.%m.%d"),
+  c("date", "%m/%d/%Y"), c("date", "%d/%m/%Y"),
+  c("time", "%H:%M:%S"), c("time", "%H:%M"))
+detect_dt <- function(s) {
+  s <- as.character(s); s <- s[!is.na(s) & trimws(s) != ""]
+  if (!length(s)) return(NULL)
+  su <- unique(s)
+  for (cd in DT_CAND) {
+    if (mean(!is.na(dt_parse(su, cd[1], cd[2]))) >= 0.9) {
+      p <- as.numeric(dt_parse(s, cd[1], cd[2])); p <- p[is.finite(p)]
+      lo <- min(p); hi <- max(p)
+      if (cd[1] == "date") hi <- hi + 86399   # include the last day in the generation range
+      if (hi <= lo) hi <- lo + 86400
+      return(list(kind = cd[1], fmt = cd[2], lo = lo, hi = hi))
+    }
+  }
+  NULL
+}
+dt_range <- function(v, dt) {            # to display the real/fake span in the same format
+  p <- as.numeric(dt_parse(v, dt$kind, dt$fmt)); p <- p[is.finite(p)]
+  if (!length(p)) return(c("-", "-"))
+  format(as.POSIXct(c(min(p), max(p)), origin = "1970-01-01", tz = "UTC"), dt$fmt)
+}
+
+# Synthesize one column
+#   numeric    : uniform random numbers over Min-Max (integer columns stay integers; decimal columns are rounded to the original number of decimals)
+#   date/datetime : random dates within the original span (output in the same format)
+#   categorical : binary keeps the original labels; 3+ levels get "<column name>1, <column name>2 ..." assigned at random
+#   missing(NA) : reproduced at the same proportion as the real data
+synth_col <- function(x, nm) {
+  out <- rep(NA, n)
+  miss_rate <- mean(is.na(x))
+  obs <- x[!is.na(x)]
+  if (length(obs)) {
+    if (is.numeric(x)) {
+      lo <- min(obs); hi <- max(obs); dec <- n_dec(obs)
+      sim <- runif(n, lo, hi)
+      out <- if (dec == 0) round(sim) else round(sim, dec)
+    } else {
+      dt <- detect_dt(obs)
+      if (!is.null(dt)) {                          # date/datetime/time
+        out <- format(as.POSIXct(runif(n, dt$lo, dt$hi), origin = "1970-01-01", tz = "UTC"), dt$fmt)
+      } else {
+        u <- sort(unique(as.character(obs)))        # observed categories
+        labels <- if (length(u) == 2) u else paste0(nm, seq_len(length(u)))  # binary keeps the original labels
+        out <- sample(labels, n, replace = TRUE)    # assign at random
+      }
+    }
+    if (miss_rate > 0) out[runif(n) < miss_rate] <- NA
+  }
+  out
+}
+
+fake <- as.data.frame(
+  setNames(lapply(names(df), function(nm) synth_col(df[[nm]], nm)), names(df)),
+  stringsAsFactors = FALSE, check.names = FALSE)
+
+cat(sprintf("Dummy data generated: %d rows x %d columns\\n(no real data values are included)\\n\\nPreview (first 6 rows):\\n", nrow(fake), ncol(fake)))
+print(utils::head(fake, 6))
+
+cat("\\n--- Is the structure preserved? (real data -> dummy) ---\\n")
+for (nm in names(df)) {
+  x <- df[[nm]]
+  miss <- sprintf(" (missing real %.0f%% / fake %.0f%%)", 100 * mean(is.na(x)), 100 * mean(is.na(fake[[nm]])))
+  if (is.numeric(x)) {
+    dec <- n_dec(x[!is.na(x)])
+    cat(sprintf("%s (numeric, %s): real range %.4g-%.4g -> fake range %.4g-%.4g%s\\n", nm,
+      if (dec == 0) "integer" else paste0(dec, " decimal place(s)"),
+      min(x, na.rm = TRUE), max(x, na.rm = TRUE),
+      min(fake[[nm]], na.rm = TRUE), max(fake[[nm]], na.rm = TRUE), miss))
+  } else {
+    dt <- detect_dt(x[!is.na(x)])
+    if (!is.null(dt)) {
+      lab <- c(datetime = "datetime", date = "date", time = "time")[[dt$kind]]
+      rr <- dt_range(x, dt); fr <- dt_range(fake[[nm]], dt)
+      cat(sprintf("%s (%s): real %s-%s -> fake %s-%s%s\\n", nm, lab, rr[1], rr[2], fr[1], fr[2], miss))
+    } else {
+      lbls <- sort(unique(na.omit(as.character(fake[[nm]]))))
+      k <- length(unique(na.omit(as.character(x))))
+      cat(sprintf("%s (categorical, %s): real %d categories -> fake %d categories (%s%s)%s\\n", nm,
+        if (k == 2) "binary = original labels" else "sequential labels", k, length(lbls),
+        paste(utils::head(lbls, 3), collapse = ", "), if (length(lbls) > 3) " ..." else "", miss))
+    }
+  }
+}
+
+# Write the CSV text wrapped in markers (the UI turns it into a download)
+tc <- textConnection("csvout", "w", local = TRUE)
+write.csv(fake, tc, row.names = FALSE, na = "")
+close(tc)
+cat("@@CSV_BEGIN\\n"); cat(paste(csvout, collapse = "\\n")); cat("\\n@@CSV_END\\n")
+`};
+  }
+
+  return {err:'unknown'};
+}
+
+/* =========================================================
+   Run on WebR
+========================================================= */
+async function runR(code, container, analysisId){
+  container.innerHTML = `
+    <div class="rcode"><div class="bar"><span># R code that was run</span><button data-copy>Copy</button></div><pre>${escHtml(code)}</pre></div>
+    <div class="rout">Running… <span style="opacity:.5">(loading packages may take some time)</span></div>`;
+  container.querySelector('[data-copy]').onclick = e => {
+    navigator.clipboard.writeText(code); e.target.textContent = '✓ Copied'; setTimeout(()=>e.target.textContent='Copy',1500);
+  };
+  const outEl = container.querySelector('.rout');
+
+  const shelter = await new webR.Shelter();
+  try {
+    const canPlot = typeof OffscreenCanvas !== 'undefined';
+    const result = await shelter.captureR(code, {
+      withAutoprint: true,
+      captureStreams: true,
+      captureConditions: true,
+      captureGraphics: canPlot ? { width: 520, height: 420, pointsize: 12 } : false,
+    });
+
+    // ---- parse output: hide @@KV / @@TSV markers, collect them ----
+    let html = '', kv = {}, tsv = null, inTsv = false; const tsvLines = [];
+    let csv = null, inCsv = false; const csvLines = [];
+    const handleLine = (line, cls) => {
+      if (line.startsWith('@@KV ')){
+        const m = line.slice(5), i = m.indexOf('=');
+        if (i > 0) kv[m.slice(0, i).trim()] = m.slice(i + 1).trim();
+        return;
+      }
+      if (line.startsWith('@@CSV_BEGIN')){ inCsv = true; return; }
+      if (line.startsWith('@@CSV_END')){ inCsv = false; csv = csvLines.join('\n'); return; }
+      if (inCsv){ csvLines.push(line); return; }
+      if (line.startsWith('@@TSV_BEGIN')){ inTsv = true; return; }
+      if (line.startsWith('@@TSV_END')){ inTsv = false; tsv = tsvLines.join('\n'); return; }
+      if (inTsv){ tsvLines.push(line); return; }
+      html += cls ? `<span class="${cls}">${escHtml(line)}</span>\n` : escHtml(line) + '\n';
+    };
+    const toText = (v) => {
+      if (v == null) return '';
+      if (typeof v === 'string') return v;
+      if (typeof v === 'object'){
+        // R condition objects: prefer .message, else try common fields
+        if (typeof v.message === 'string') return v.message;
+        if (Array.isArray(v.message)) return v.message.join('');
+        try { return String(v.message ?? v.data ?? ''); } catch(e){ return ''; }
+      }
+      try { return String(v); } catch(e){ return ''; }
+    };
+    for (const o of result.output){
+      let data, cls = '';
+      if (o.type === 'stdout') data = toText(o.data);
+      else if (o.type === 'stderr'){ data = toText(o.data); cls = 'stderr'; }
+      else if (o.type === 'message' || o.type === 'warning' || o.type === 'error'){
+        data = toText(o.data); cls = 'stderr';
+      } else {
+        data = toText(o.data); cls = 'stderr';
+      }
+      if (data) data.split('\n').forEach(l => handleLine(l, cls));
+    }
+    outEl.innerHTML = html || '(no output)';
+
+    // ---- copy toolbar ----
+    const bar = document.createElement('div');
+    bar.className = 'outbar';
+    let barHtml = `<button class="minibtn" data-copyout>📋 Copy output</button>`;
+    if (tsv) barHtml += `<button class="minibtn" data-copytsv>📋 Copy table (for pasting into Excel / Word)</button>`;
+    if (csv) barHtml += `<button class="minibtn" data-dlcsv style="border-color:var(--r-blue);color:var(--r-blue);font-weight:500">⬇ Download dummy CSV</button>`
+      + `<button class="minibtn" data-copycsv>📋 Copy dummy CSV (for pasting to an AI)</button>`;
+    bar.innerHTML = barHtml;
+    outEl.parentNode.insertBefore(bar, outEl);
+    bar.querySelector('[data-copyout]').onclick = e => {
+      navigator.clipboard.writeText(outEl.textContent);
+      e.target.textContent = '✓ Copied'; setTimeout(()=>e.target.textContent='📋 Copy output',1500);
+    };
+    if (tsv) bar.querySelector('[data-copytsv]').onclick = e => {
+      navigator.clipboard.writeText(tsv);
+      e.target.textContent = '✓ Copied (paste directly into Excel)';
+      setTimeout(()=>e.target.textContent='📋 Copy table (for pasting into Excel / Word)',2000);
+    };
+    if (csv){
+      bar.querySelector('[data-dlcsv]').onclick = () => {
+        const blob = new Blob(['\uFEFF' + csv], {type:'text/csv;charset=utf-8'});
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(blob);
+        a.download = 'dummy_data.csv';
+        a.click();
+        setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+      };
+      bar.querySelector('[data-copycsv]').onclick = e => {
+        navigator.clipboard.writeText(csv);
+        e.target.textContent = '✓ Copied'; setTimeout(()=>e.target.textContent='📋 Copy dummy CSV (for pasting to an AI)',1500);
+      };
+    }
+
+    // ---- dynamic interpretation card ----
+    if (analysisId && INTERPRET[analysisId]){
+      try {
+        const cardHtml = INTERPRET[analysisId](kv);
+        if (cardHtml) outEl.insertAdjacentHTML('afterend', cardHtml);
+      } catch(e){ console.warn('interpret error', e); }
+    }
+
+    // ---- plots with PNG download ----
+    if (result.images && result.images.length){
+      const grid = document.createElement('div');
+      grid.className = 'plotgrid';
+      result.images.forEach((img, idx) => {
+        const wrap = document.createElement('div');
+        wrap.style.cssText = 'display:flex;flex-direction:column;gap:.35rem;align-items:flex-start';
+        const cv = document.createElement('canvas');
+        cv.width = img.width; cv.height = img.height;
+        cv.getContext('2d').drawImage(img, 0, 0);
+        const dl = document.createElement('button');
+        dl.className = 'minibtn'; dl.textContent = '⬇ Save PNG';
+        dl.onclick = () => cv.toBlob(b => {
+          const a = document.createElement('a');
+          a.href = URL.createObjectURL(b);
+          a.download = `plot_${idx + 1}.png`;
+          a.click();
+          setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+        });
+        wrap.appendChild(cv); wrap.appendChild(dl); grid.appendChild(wrap);
+      });
+      container.appendChild(grid);
+    }
+  } catch (e){
+    outEl.innerHTML = `<span class="stderr">Error: ${escHtml(e.message || String(e))}</span>`;
+  } finally {
+    shelter.purge();
+  }
+}
+
+async function runAnalysis(){
+  if (!ready || !dataLoaded) return;
+  const a = ANALYSES.find(x => x.id === currentTab);
+  const {code, err} = genCode(a);
+  const res = document.getElementById('results');
+  if (err){ res.innerHTML = `<div class="rout"><span class="stderr">${escHtml(err)}</span></div>`; return; }
+  const btn = document.getElementById('runBtn');
+  btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Running…';
+  document.getElementById('codeNote').hidden = false;
+  await runR(code, res, a.id);
+  btn.disabled = false; btn.innerHTML = '<span class="play">▶</span> Run analysis in R';
+}
+
+/* =========================================================
+   Free console
+========================================================= */
+const freeBtn = document.getElementById('freeRun');
+const freeCode = document.getElementById('freeCode');
+freeBtn.onclick = runFree;
+freeCode.addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); runFree(); }
+});
+async function runFree(){
+  if (!ready) return;
+  const code = freeCode.value.trim();
+  if (!code) return;
+  freeBtn.disabled = true; freeBtn.innerHTML = '<span class="spin"></span> Running…';
+  await runR(code, document.getElementById('freeResults'));
+  freeBtn.disabled = false; freeBtn.innerHTML = '<span class="play">▶</span> Run';
+}
+
+// init tab strip (disabled until data load)
+renderTabs();
+</script>
+</body>
+</html>
