@@ -177,7 +177,7 @@ table.preview th{background:#F3F6F4;position:sticky;top:0}
   padding:.9rem 1rem;min-height:110px;resize:vertical;
 }
 .console-panel .toolbar{
-  display:flex;align-items:center;gap:.7rem;padding:.6rem 1rem;background:#FBFCFA;border-top:1px solid var(--line);
+  display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;padding:.6rem 1rem;background:#FBFCFA;border-top:1px solid var(--line);
 }
 .console-panel .toolbar .hint{font-size:.74rem;color:var(--ink-soft)}
 footer{max-width:1180px;margin:0 auto;padding:0 1.4rem 2rem;font-size:.74rem;color:#8A989F}
@@ -243,9 +243,14 @@ footer a{color:var(--r-blue)}
     <section class="panel console-panel">
       <h2>3 · R Console (free input)</h2>
       <textarea id="freeCode" spellcheck="false" placeholder="# The loaded data is available as df
-# e.g.: summary(df) / table(df[[&quot;Sex&quot;]]) / lm(y ~ x, data = df)"></textarea>
+# e.g.: summary(df) / table(df[[&quot;Sex&quot;]]) / lm(y ~ x, data = df)
+# To add a package:
+# if (!requireNamespace(&quot;dplyr&quot;, quietly = TRUE)) webr::install(&quot;dplyr&quot;)
+# library(dplyr)"></textarea>
       <div class="toolbar">
         <button class="runbtn" id="freeRun" disabled><span class="play">▶</span> Run</button>
+        <button class="minibtn" id="copyPkgExample" type="button">📋 Copy package example</button>
+        <button class="minibtn" id="copyAiPrompt" type="button">📋 Copy AI prompt</button>
         <span class="hint">You can also run with Ctrl+Enter (⌘+Enter)</span>
       </div>
       <div class="results" id="freeResults" style="padding-top:1rem"></div>
@@ -1603,10 +1608,42 @@ async function runAnalysis(){
 ========================================================= */
 const freeBtn = document.getElementById('freeRun');
 const freeCode = document.getElementById('freeCode');
+const pkgExampleText = `# Add and load a package in WebR
+if (!requireNamespace("dplyr", quietly = TRUE)) webr::install("dplyr")
+library(dplyr)
+
+# Install several packages
+webr::install(c("dplyr", "ggplot2", "broom"))
+library(dplyr)
+library(ggplot2)
+library(broom)`;
+const aiPromptText = `The following dataset is dummy data, not real patient data.
+Assume it has already been loaded in R as a data frame named df. Please write R code for the analysis.
+
+Assumptions:
+- The data is already available as df.
+- Refer to columns using df[["column name"]] when needed.
+- Handle missing values appropriately with complete.cases(), na.omit(), or model-specific defaults.
+- If an additional package is needed in WebR, install it like this:
+
+if (!requireNamespace("package_name", quietly = TRUE)) webr::install("package_name")
+library(package_name)
+
+Request:
+- Choose an appropriate statistical analysis for the goal.
+- Provide the R code.
+- Briefly explain how to interpret the results and any cautions.`;
 freeBtn.onclick = runFree;
+document.getElementById('copyPkgExample').onclick = e => copySnippet(pkgExampleText, e.target, '📋 Copy package example');
+document.getElementById('copyAiPrompt').onclick = e => copySnippet(aiPromptText, e.target, '📋 Copy AI prompt');
 freeCode.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); runFree(); }
 });
+function copySnippet(text, btn, label){
+  navigator.clipboard.writeText(text);
+  btn.textContent = '✓ Copied';
+  setTimeout(() => btn.textContent = label, 1500);
+}
 async function runFree(){
   if (!ready) return;
   const code = freeCode.value.trim();

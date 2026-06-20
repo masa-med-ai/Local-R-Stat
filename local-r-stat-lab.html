@@ -177,7 +177,7 @@ table.preview th{background:#F3F6F4;position:sticky;top:0}
   padding:.9rem 1rem;min-height:110px;resize:vertical;
 }
 .console-panel .toolbar{
-  display:flex;align-items:center;gap:.7rem;padding:.6rem 1rem;background:#FBFCFA;border-top:1px solid var(--line);
+  display:flex;align-items:center;gap:.7rem;flex-wrap:wrap;padding:.6rem 1rem;background:#FBFCFA;border-top:1px solid var(--line);
 }
 .console-panel .toolbar .hint{font-size:.74rem;color:var(--ink-soft)}
 footer{max-width:1180px;margin:0 auto;padding:0 1.4rem 2rem;font-size:.74rem;color:#8A989F}
@@ -243,9 +243,14 @@ footer a{color:var(--r-blue)}
     <section class="panel console-panel">
       <h2>3 · R Console（自由入力）</h2>
       <textarea id="freeCode" spellcheck="false" placeholder="# 読み込んだデータは df で参照できます
-# 例: summary(df) / table(df[[&quot;性別&quot;]]) / lm(y ~ x, data = df)"></textarea>
+# 例: summary(df) / table(df[[&quot;性別&quot;]]) / lm(y ~ x, data = df)
+# ライブラリを追加する場合:
+# if (!requireNamespace(&quot;dplyr&quot;, quietly = TRUE)) webr::install(&quot;dplyr&quot;)
+# library(dplyr)"></textarea>
       <div class="toolbar">
         <button class="runbtn" id="freeRun" disabled><span class="play">▶</span> 実行</button>
+        <button class="minibtn" id="copyPkgExample" type="button">📋 ライブラリ追加例をコピー</button>
+        <button class="minibtn" id="copyAiPrompt" type="button">📋 AI用プロンプトをコピー</button>
         <span class="hint">Ctrl+Enter（⌘+Enter）でも実行できます</span>
       </div>
       <div class="results" id="freeResults" style="padding-top:1rem"></div>
@@ -1604,10 +1609,42 @@ async function runAnalysis(){
 ========================================================= */
 const freeBtn = document.getElementById('freeRun');
 const freeCode = document.getElementById('freeCode');
+const pkgExampleText = `# WebRでライブラリを追加して読み込む例
+if (!requireNamespace("dplyr", quietly = TRUE)) webr::install("dplyr")
+library(dplyr)
+
+# 複数入れる場合
+webr::install(c("dplyr", "ggplot2", "broom"))
+library(dplyr)
+library(ggplot2)
+library(broom)`;
+const aiPromptText = `以下は実データではなく、構造を似せて作成したダミーデータです。
+Rではデータフレーム df として読み込まれている前提で、解析用のRコードを作成してください。
+
+前提:
+- データはすでに df として読み込まれています。
+- 列名は df[["列名"]] の形式で参照してください。
+- 欠損値を考慮し、必要に応じて complete.cases() や na.omit() を使ってください。
+- WebR環境で追加ライブラリが必要な場合は、次の形式でインストールしてください。
+
+if (!requireNamespace("パッケージ名", quietly = TRUE)) webr::install("パッケージ名")
+library(パッケージ名)
+
+依頼:
+- 目的に合う統計解析を選んでください。
+- 解析に使うRコードを提示してください。
+- 結果の読み方と注意点も簡潔に説明してください。`;
 freeBtn.onclick = runFree;
+document.getElementById('copyPkgExample').onclick = e => copySnippet(pkgExampleText, e.target, '📋 ライブラリ追加例をコピー');
+document.getElementById('copyAiPrompt').onclick = e => copySnippet(aiPromptText, e.target, '📋 AI用プロンプトをコピー');
 freeCode.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); runFree(); }
 });
+function copySnippet(text, btn, label){
+  navigator.clipboard.writeText(text);
+  btn.textContent = '✓ コピーしました';
+  setTimeout(() => btn.textContent = label, 1500);
+}
 async function runFree(){
   if (!ready) return;
   const code = freeCode.value.trim();
