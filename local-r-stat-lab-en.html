@@ -295,6 +295,8 @@ function setStatus(cls, text){
    CSV loading (fully local)
 ========================================================= */
 let dataLoaded = false;
+let rDataLoaded = false;
+let pendingDataWrite = null;
 let columns = [];          // [{name, type:'num'|'cat', nLevels}]
 let csvTextCache = '';
 let nRows = 0;
@@ -376,14 +378,22 @@ async function loadFile(file){
   columns.forEach(c => { if (c.type === 'num-few') c.type = 'num'; });
 
   csvTextCache = text;
-  // push into R virtual FS
-  if (ready){
-    await writeDataToR();
-  } else {
-    const waiter = setInterval(async () => {
-      if (ready){ clearInterval(waiter); await writeDataToR(); }
-    }, 500);
-  }
+  rDataLoaded = false;
+  refreshRunButtons();
+  const thisText = text;
+  pendingDataWrite = waitForRReady()
+    .then(() => {
+      if (csvTextCache !== thisText) return;
+      return writeDataToR();
+    })
+    .then(() => {
+      if (csvTextCache === thisText) rDataLoaded = true;
+    })
+    .catch(e => {
+      console.error(e);
+      alert('Failed to load the data into R. Please check the CSV contents.');
+    })
+    .finally(refreshRunButtons);
 
   // render meta
   document.getElementById('dataInfo').hidden = false;
@@ -422,6 +432,14 @@ async function writeDataToR(){
 function escHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
 function escR(s){ return String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"'); }
 function col(name){ return `df[["${escR(name)}"]]`; }
+function waitForRReady(){
+  if (ready) return Promise.resolve();
+  return new Promise(resolve => {
+    const waiter = setInterval(() => {
+      if (ready){ clearInterval(waiter); resolve(); }
+    }, 250);
+  });
+}
 
 /* =========================================================
    Analysis definitions
@@ -813,7 +831,7 @@ function selectTab(id){
     html += '<div class="optrow">' + a.opts.map(o =>
       `<label><input type="checkbox" id="o_${o.key}" ${o.def ? 'checked' : ''}>${o.label}</label>`).join('') + '</div>';
   }
-  html += `<button class="runbtn" id="runBtn" ${ready ? '' : 'disabled'}><span class="play">▶</span> Run analysis in R</button>`;
+  html += `<button class="runbtn" id="runBtn" ${ready && rDataLoaded ? '' : 'disabled'}><span class="play">▶</span> Run analysis in R</button>`;
   cfg.innerHTML = html;
   const hb = document.getElementById('helpBtn');
   if (hb) hb.onclick = () => {
@@ -828,7 +846,7 @@ function selectTab(id){
 
 function refreshRunButtons(){
   const b = document.getElementById('runBtn');
-  if (b && dataLoaded) b.disabled = false;
+  if (b) b.disabled = !(dataLoaded && rDataLoaded);
 }
 
 /* =========================================================
@@ -1020,10 +1038,14 @@ cat("Cross-tabulation:\\n"); print(tab)
 cat("\\nRow %:\\n"); print(round(prop.table(tab, 1) * 100, 1))
 cat("\\nχ² test:\\n"); ct <- suppressWarnings(chisq.test(tab)); print(ct)
 cat("Expected counts:\\n"); print(round(ct$expected, 2))
-fis <- try(fisher.test(tab), silent = TRUE)
-if (!inherits(fis, "try-error")) { cat("\\nFisher exact test:\\n"); print(fis)
-  cat(sprintf("@@KV p_fisher=%.6g\\n", fis$p.value)) } else
+if (nrow(tab) * ncol(tab) <= 20) {
+  fis <- try(fisher.test(tab, workspace = 2e6), silent = TRUE)
+  if (!inherits(fis, "try-error")) { cat("\\nFisher exact test:\\n"); print(fis)
+    cat(sprintf("@@KV p_fisher=%.6g\\n", fis$p.value)) } else
+    cat("\\nFisher exact test: skipped because it could not be computed\\n")
+} else {
   cat("\\nFisher exact test: omitted because the table is too large\\n")
+}
 cat(sprintf("@@KV p_chi=%.6g\\n@@KV minexp=%.4g\\n", ct$p.value, min(ct$expected)))
 mosaicplot(tab, main = "${escR(A)} × ${escR(B)}", color = c("#9FC4E8","#F2C9A0","#BFD8B8","#D8B8D8","#E8D49F"))
 `};
@@ -1063,7 +1085,7 @@ if (nrow(tab) == 2) {
     const t = val('time'), evt = val('event'), g = val('g');
     const covs = vals('covs').filter(c => c !== t && c !== evt && c !== g);
     if (!t || !evt) return {err:'Please select the time variable and the event variable'};
-    const bq = s => '`' + s.replace(/`/g, '') + '`';
+    const covTerms = covs.map((_, i) => `.cov${i + 1}`);
     const FP =
 `fp <- function(m, xlab) {
   m <- m[is.finite(m[,1]) & is.finite(m[,2]) & is.finite(m[,3]), , drop = FALSE]
@@ -1097,15 +1119,15 @@ if (is.numeric(e_raw)) {
 }
 d <- data.frame(.time = tm, .event = ev, check.names = FALSE)
 `;
-    if (g) code += `d[["${escR(g)}"]] <- factor(${col(g)})\n`;
-    covs.forEach(c => { code += `d[["${escR(c)}"]] <- ${col(c)}\n`; });
+    if (g) code += `d$.group <- factor(${col(g)})\n`;
+    covs.forEach((c, i) => { code += `d$.cov${i + 1} <- ${col(c)}\n`; });
     code += `d <- d[complete.cases(d), ]
 cat(sprintf("Analysis set: n = %d (cases with no missing values across all selected variables), number of events = %d\\n\\n", nrow(d), sum(d$.event)))
 `;
     if (g){
-      const rhs = [bq(g), ...covs.map(bq)].join(' + ');
+      const rhs = ['.group', ...covTerms].join(' + ');
       code +=
-`grp <- droplevels(factor(d[["${escR(g)}"]]))
+`grp <- droplevels(factor(d$.group))
 glv <- levels(grp)
 fit <- survfit(Surv(d$.time, d$.event) ~ grp)
 cat("Kaplan-Meier summary (by group; median survival and 95% CI):\\n"); print(fit)
@@ -1161,7 +1183,7 @@ axis(1, at = tp, cex.axis = .7)
 layout(1)
 `;
       if (covs.length){
-        const rhs2 = covs.map(bq).join(' + ');
+        const rhs2 = covTerms.join(' + ');
         code +=
 `cat("\\nCox proportional hazards model:\\n")
 cx <- coxph(Surv(.time, .event) ~ ${rhs2}, data = d)
@@ -1260,11 +1282,13 @@ abline(lm(y ~ x), col = "#C0392B", lwd = 2)
     const y = val('y'), xs = vals('x');
     if (!y || !xs.length) return {err:'Please select the response and explanatory variables'};
     if (xs.includes(y)) return {err:'The response variable is also included among the explanatory variables'};
-    const rhs = xs.map(v => '`' + v.replace(/`/g,'') + '`').join(' + ');
-    const lhs = '`' + y.replace(/`/g,'') + '`';
+    const rhs = xs.map((_, i) => `.x${i + 1}`).join(' + ');
+    const assignXs = xs.map((v, i) => `d$.x${i + 1} <- ${col(v)}`).join('\n');
     if (a.id === 'lm'){
       return {code:
-`fit <- lm(${lhs} ~ ${rhs}, data = df)
+`d <- data.frame(.response = ${col(y)}, check.names = FALSE)
+${assignXs}
+fit <- lm(.response ~ ${rhs}, data = d)
 print(summary(fit))
 cat("\\n95% confidence intervals:\\n"); print(round(confint(fit), 4))
 cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
@@ -1273,9 +1297,10 @@ cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
     return {code:
 `yv <- factor(df[["${escR(y)}"]])
 stopifnot("The response variable must be binary" = nlevels(droplevels(yv[!is.na(yv)])) == 2)
-df$.outcome <- as.integer(yv) - 1L
+d <- data.frame(.outcome = as.integer(yv) - 1L, check.names = FALSE)
+${assignXs}
 cat(sprintf("Outcome: %s=0, %s=1\\n\\n", levels(yv)[1], levels(yv)[2]))
-fit <- glm(.outcome ~ ${rhs}, data = df, family = binomial)
+fit <- glm(.outcome ~ ${rhs}, data = d, family = binomial)
 print(summary(fit))
 or <- exp(cbind(OR = coef(fit), suppressMessages(confint(fit))))
 cat("\\nOdds ratios and 95% confidence intervals:\\n"); print(round(or, 3))
@@ -1558,6 +1583,10 @@ async function runR(code, container, analysisId){
 
 async function runAnalysis(){
   if (!ready || !dataLoaded) return;
+  if (!rDataLoaded && pendingDataWrite) {
+    await pendingDataWrite;
+    if (!rDataLoaded) return;
+  }
   const a = ANALYSES.find(x => x.id === currentTab);
   const {code, err} = genCode(a);
   const res = document.getElementById('results');

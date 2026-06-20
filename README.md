@@ -6,6 +6,8 @@ CSV を読み込み、ブラウザ内で完結する R 統計解析ツール。�
 
 **🌐 Language / 言語:** [English](#-english) · [日本語](#-日本語)
 
+**Current version / 現行バージョン:** v1.1.0
+
 ## Files / ファイル
 
 | File | UI | Description |
@@ -17,6 +19,22 @@ CSV を読み込み、ブラウザ内で完結する R 統計解析ツール。�
 
 > Note: GitHub does not run JavaScript inside README files, so a true "click-to-switch" toggle is not possible here. Instead, the two languages are placed in collapsible sections below — click a section to expand it.
 > 補足: GitHub は README 内で JavaScript を実行しないため、真の「クリックで切替」はできない。代わりに、下記の折りたたみセクションで各言語を展開できる。
+
+---
+
+## Changelog / 変更履歴
+
+### v1.1.0 - 2026-06-20
+
+- Improved CSV loading reliability: analysis buttons now remain disabled until the CSV has been fully written into WebR as `df`.
+- Made generated regression and Cox model formulas safer for column names containing spaces, Japanese text, symbols, or backticks by using temporary internal variable names.
+- Prevented logistic regression from modifying the global `df` object by using a local analysis data frame.
+- Added a size guard for Fisher's exact test in contingency tables to avoid long freezes on large tables.
+
+- CSV 読み込みの信頼性を改善。CSV が WebR 内で `df` として完全に読み込まれるまで解析ボタンを有効化しないようにした。
+- 回帰分析・Cox 回帰の式生成を改善。空白、日本語、記号、バッククォートを含む列名でも壊れにくいよう、一時的な内部変数名を使う方式に変更した。
+- ロジスティック回帰がグローバルな `df` を変更しないよう、解析用のローカルデータフレームを使う方式に変更した。
+- 分割表の Fisher 正確検定にサイズ制限を追加し、大きな表で長時間停止するリスクを抑えた。
 
 ---
 
