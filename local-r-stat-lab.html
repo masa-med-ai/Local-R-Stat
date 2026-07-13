@@ -194,7 +194,7 @@ footer a{color:var(--r-blue)}
   </div>
   <div class="status" id="status"><span class="dot"></span><span id="statusText">Rエンジンを起動中…（初回は1〜2分かかることがあります）</span></div>
 </header>
-<div class="privacy">🔒 <strong>データはこのブラウザの中だけで処理されます。</strong>CSVの内容がネットワークに送信されることはありません（初回のRエンジン読込のみ通信が発生します）。</div>
+<div class="privacy">🔒 <strong>標準のCSV読込・プリセット解析はブラウザ内で完結します。</strong>WebR本体・フォント・追加Rパッケージの取得には通信が発生します。自由入力コードの通信動作は実行するコード次第です。</div>
 
 <main>
   <!-- ===== left: data ===== -->
@@ -269,7 +269,9 @@ footer a{color:var(--r-blue)}
 ========================================================= */
 const statusEl = document.getElementById('status');
 const statusText = document.getElementById('statusText');
-let webR = null, ready = false;
+const WEBR_VERSION = 'v0.6.0';
+const MAX_CSV_BYTES = 50 * 1024 * 1024;
+let webR = null, ready = false, initError = null;
 
 function setStatus(cls, text){
   statusEl.className = 'status ' + cls;
@@ -278,7 +280,7 @@ function setStatus(cls, text){
 
 (async () => {
   try {
-    const { WebR } = await import('https://webr.r-wasm.org/latest/webr.mjs');
+    const { WebR } = await import(`https://webr.r-wasm.org/${WEBR_VERSION}/webr.mjs`);
     webR = new WebR();
     await webR.init();
     const v = await webR.evalRString('paste(R.version$major, R.version$minor, sep=".")');
@@ -286,13 +288,11 @@ function setStatus(cls, text){
     setStatus('ready', 'R ' + v + ' 準備完了');
     document.getElementById('freeRun').disabled = false;
     refreshRunButtons();
-    // 追加DLが必要なのは生存分析の survival パッケージのみ。
-    // 起動完了後にバックグラウンドで先読みし、初回の待ち時間をなくす
-    //（Rワーカーは直列実行なので、先読み中に生存分析を押しても自動的に完了を待つ）。
-    webR.evalRVoid('try(suppressMessages(webr::install("survival")), silent = TRUE)').catch(() => {});
   } catch (e) {
     console.error(e);
+    initError = e instanceof Error ? e : new Error(String(e));
     setStatus('error', 'R起動に失敗。ネット接続を確認しページを再読込してください');
+    refreshRunButtons();
   }
 })();
 
@@ -302,6 +302,7 @@ function setStatus(cls, text){
 let dataLoaded = false;
 let rDataLoaded = false;
 let pendingDataWrite = null;
+let dataWriteQueue = Promise.resolve();
 let columns = [];          // [{name, type:'num'|'cat', nLevels}]
 let csvTextCache = '';
 let nRows = 0;
@@ -310,7 +311,11 @@ const dropzone = document.getElementById('dropzone');
 const fileInput = document.getElementById('fileInput');
 document.getElementById('pickBtn').onclick = () => fileInput.click();
 document.getElementById('replaceBtn').onclick = () => fileInput.click();
-fileInput.onchange = () => { if (fileInput.files[0]) loadFile(fileInput.files[0]); };
+fileInput.onchange = () => {
+  const file = fileInput.files[0];
+  fileInput.value = '';
+  if (file) loadFile(file).catch(handleFileError);
+};
 
 ['dragover','dragenter'].forEach(ev => dropzone.addEventListener(ev, e => {
   e.preventDefault(); dropzone.classList.add('drag');
@@ -320,8 +325,13 @@ fileInput.onchange = () => { if (fileInput.files[0]) loadFile(fileInput.files[0]
 }));
 dropzone.addEventListener('drop', e => {
   const f = e.dataTransfer.files[0];
-  if (f) loadFile(f);
+  if (f) loadFile(f).catch(handleFileError);
 });
+
+function handleFileError(e){
+  console.error(e);
+  alert(`CSVの読み込みに失敗しました。${e?.message ? `\n${e.message}` : ''}`);
+}
 
 function decodeBuffer(buf){
   const mode = document.getElementById('encSel').value;
@@ -351,18 +361,49 @@ function parseCSV(text){
       else cur += c;
     }
   }
+  if (inQ) throw new Error('引用符（"）が閉じていないセルがあります。');
   if (cur !== '' || row.length) { row.push(cur); rows.push(row); }
   return rows.filter(r => !(r.length === 1 && r[0].trim() === ''));
 }
 
+function serializeCSV(rows){
+  const cell = value => {
+    const s = String(value ?? '');
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  };
+  return rows.map(row => row.map(cell).join(',')).join('\n');
+}
+
 async function loadFile(file){
+  if (file.size > MAX_CSV_BYTES){
+    alert('CSVが大きすぎます。50 MB以下のファイルを指定してください。');
+    return;
+  }
   const buf = await file.arrayBuffer();
   const text = decodeBuffer(buf).replace(/^\uFEFF/, '');
   const rows = parseCSV(text);
   if (rows.length < 2){ alert('データ行が見つかりません。ヘッダー行＋データ行のCSVを指定してください。'); return; }
 
-  const header = rows[0].map((h,i) => h.trim() || ('V' + (i+1)));
+  const header = rows[0].map(h => h.trim());
+  const blankColumns = header.map((name, i) => name ? null : i + 1).filter(Boolean);
+  if (blankColumns.length){
+    alert(`列名が空の列があります: ${blankColumns.join(', ')}列目\nすべての列に名前を付けてください。`);
+    return;
+  }
   const body = rows.slice(1);
+  const duplicates = [...new Set(header.filter((name, i) => header.indexOf(name) !== i))];
+  if (duplicates.length){
+    alert(`重複した列名があります: ${duplicates.join(', ')}\n列名を一意にしてから読み込んでください。`);
+    return;
+  }
+  const invalidRows = body
+    .map((r, i) => ({line: i + 2, count: r.length}))
+    .filter(r => r.count !== header.length);
+  if (invalidRows.length){
+    const sample = invalidRows.slice(0, 5).map(r => `${r.line}行目（${r.count}列）`).join('、');
+    alert(`列数がヘッダー（${header.length}列）と一致しない行があります: ${sample}${invalidRows.length > 5 ? ' ほか' : ''}`);
+    return;
+  }
   nRows = body.length;
 
   // type detection
@@ -375,28 +416,30 @@ async function loadFile(file){
       levels.add(v);
       if (/^[-+]?\d*\.?\d+([eE][-+]?\d+)?$/.test(v)) numeric++;
     }
-    const isNum = nonEmpty > 0 && numeric / nonEmpty > 0.9 && levels.size > 5;
-    const isNumStrict = nonEmpty > 0 && numeric / nonEmpty > 0.9;
-    return { name, type: isNumStrict ? (levels.size <= 5 ? 'num-few' : 'num') : 'cat', nLevels: levels.size };
+    const isNumeric = nonEmpty > 0 && numeric === nonEmpty;
+    return { name, type: isNumeric ? 'num' : 'cat', nLevels: levels.size };
   });
-  // num-few: numeric but few levels (could be group codes) — treat as numeric, but offer in group selects too
-  columns.forEach(c => { if (c.type === 'num-few') c.type = 'num'; });
 
-  csvTextCache = text;
+  const normalizedText = serializeCSV([header, ...body]);
+  csvTextCache = normalizedText;
   rDataLoaded = false;
   refreshRunButtons();
-  const thisText = text;
+  const thisText = normalizedText;
+  const expectedColumns = columns.length;
+  const expectedRows = nRows;
   pendingDataWrite = waitForRReady()
     .then(() => {
-      if (csvTextCache !== thisText) return;
-      return writeDataToR();
-    })
-    .then(() => {
-      if (csvTextCache === thisText) rDataLoaded = true;
+      dataWriteQueue = dataWriteQueue.catch(() => {}).then(async () => {
+        if (csvTextCache !== thisText) return;
+        await writeDataToR(thisText, expectedColumns, expectedRows);
+        if (csvTextCache === thisText) rDataLoaded = true;
+      });
+      return dataWriteQueue;
     })
     .catch(e => {
       console.error(e);
-      alert('Rへのデータ読み込みに失敗しました。CSVの内容を確認してください。');
+      if (csvTextCache === thisText) rDataLoaded = false;
+      alert(`Rへのデータ読み込みに失敗しました。CSVの内容を確認してください。${e?.message ? `\n${e.message}` : ''}`);
     })
     .finally(refreshRunButtons);
 
@@ -428,20 +471,45 @@ async function loadFile(file){
   selectTab(currentTab || 'desc');
 }
 
-async function writeDataToR(){
-  const enc = new TextEncoder().encode(csvTextCache);
+async function writeDataToR(csvText, expectedColumns, expectedRows){
+  const enc = new TextEncoder().encode(csvText);
   await webR.FS.writeFile('/tmp/data.csv', enc);
-  await webR.evalRVoid(`df <- read.csv('/tmp/data.csv', check.names = FALSE, fileEncoding = 'UTF-8')`);
+  await webR.evalRVoid(`{
+    parsed <- read.csv('/tmp/data.csv', check.names = FALSE, fileEncoding = 'UTF-8')
+    stopifnot("CSVの列数が一致しません" = ncol(parsed) == ${expectedColumns})
+    stopifnot("CSVの行数が一致しません" = nrow(parsed) == ${expectedRows})
+    df <- parsed
+  }`);
 }
 
 function escHtml(s){ return String(s).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m])); }
-function escR(s){ return String(s).replace(/\\/g,'\\\\').replace(/"/g,'\\"'); }
+function escR(s){
+  return String(s)
+    .replace(/\\/g,'\\\\').replace(/"/g,'\\"')
+    .replace(/\n/g,'\\n').replace(/\r/g,'\\r').replace(/\t/g,'\\t');
+}
 function col(name){ return `df[["${escR(name)}"]]`; }
+async function copyText(text){
+  try {
+    await navigator.clipboard.writeText(text);
+  } catch (e) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;left:-9999px;top:0';
+    document.body.appendChild(ta);
+    ta.select();
+    const copied = document.execCommand('copy');
+    ta.remove();
+    if (!copied) throw e;
+  }
+}
 function waitForRReady(){
   if (ready) return Promise.resolve();
-  return new Promise(resolve => {
+  if (initError) return Promise.reject(initError);
+  return new Promise((resolve, reject) => {
     const waiter = setInterval(() => {
       if (ready){ clearInterval(waiter); resolve(); }
+      else if (initError){ clearInterval(waiter); reject(initError); }
     }, 250);
   });
 }
@@ -575,14 +643,15 @@ roc: `
 <h4>注意</h4>カットオフは目的で変えるべきです（見逃したくないスクリーニングなら感度重視、確定診断なら特異度重視）。同じデータで決めたカットオフは性能を過大評価しがちなので、別データでの検証が理想です。`,
 
 synth: `
-<h4>何のための機能？</h4>患者データそのものを生成AI（ChatGPT等）にアップロードするのは情報管理上問題があります。この機能は<b>実データと同じ「構造」を持つ偽データ</b>を作るので、それをAIに渡せば、コードのデバッグや解析方法の相談を安全に行えます。
-<h4>何が保たれ、何が変わる？</h4>
+<h4>何のための機能？</h4>患者データを外部サービスへ渡さず、コードや画面の動作を試すための合成CSVを作ります。
+<h4>共有安全モード（既定）</h4>
 <ul>
-<li><b>保たれるもの</b>: 列名、各列の型（数値/カテゴリ/日付）、行数、数値の最小値・最大値と整数/小数の別、カテゴリの「種類の数」（2値変数は選択肢そのもの）、日付列の期間（最古〜最新）と書式、欠損（空セル）の割合。</li>
-<li><b>完全に変わるもの</b>: <b>すべてのセルの中身</b>。数値はMin〜Maxの範囲でランダムに引き直し、3水準以上のカテゴリは「列名＋連番」のダミーラベル（例: 医師1, 医師2…）をカテゴリ数だけ作って割り当てます（<b>あり/なしのような2値変数は元の表記を保ったままランダム化</b>）。日付・時刻（タイムスタンプ）と判定された列は、元の期間内のランダムな日付に置き換えます。実在する患者の値（氏名・実際の日付など）は1つも残らず、平均・SD・出現比率・行どうしの対応も保たれません。</li>
+<li>列名は variable_01…、全カテゴリは category_1…へ一般化します。</li>
+<li>日付は固定の架空期間、通常の数値は汎用尺度へ置き換えます。0/1列は解析互換性のため維持します。</li>
+<li>行数、列型、カテゴリ数、指定時の欠損数を保ちますが、平均・SD・実際の値域・行対応は保ちません。</li>
+<li>識別子らしい列名、高一意率、日付、自由記述、少数カテゴリを検査します。構造優先モードでは危険を検出すると既定でCSV出力を停止します。</li>
 </ul>
-<h4>使い方</h4>実行すると偽データのプレビューと「⬇ ダミーCSVをダウンロード」ボタンが出ます。落としたCSVをそのままAIに渡してください。
-<h4>注意</h4>これは統計的性質を真似た<b>合成データ</b>であり、匿名化された実データではありません。逆に、本物の解析結果（有意差など）はこの偽データでは再現されないため、あくまでコードや手順の相談用と考えてください。`,
+<h4>注意</h4>これは<b>匿名化・非識別化を保証するツールではありません</b>。警告とプレビューを確認し、所属組織のデータ取扱規程に従ってください。`,
 };
 
 /* =========================================================
@@ -606,44 +675,59 @@ function judge(p, rej, keep){
 
 const INTERPRET = {
   two: kv => {
-    const p = Pn(kv.p_t); if (p === null) return '';
-    const pw = Pn(kv.p_w), m1 = Pn(kv.m1), m2 = Pn(kv.m2);
+    const pt = Pn(kv.p_t), pw = Pn(kv.p_w);
+    const useW = kv.primary === 'wilcox' && pw !== null;
+    const p = useW ? pw : pt; if (p === null) return '';
+    const m1 = Pn(kv.m1), m2 = Pn(kv.m2);
     const dir = (m1 !== null && m2 !== null)
       ? `データ上は ${escHtml(kv.g2)}（平均 ${g4(kv.m2)}）の方が ${escHtml(kv.g1)}（平均 ${g4(kv.m1)}）より${m2 > m1 ? '高い' : '低い'}方向です。` : '';
     let extra = '';
-    if (pw !== null && ((p < 0.05) !== (pw < 0.05)))
-      extra = `<div>⚠ t検定とWilcoxon検定（${pj(pw)}）で結論が分かれています。Shapiro-Wilkとヒストグラムで分布の偏りを確認し、偏りがあればWilcoxonを優先してください。</div>`;
+    if (pt !== null && pw !== null && ((pt < 0.05) !== (pw < 0.05)))
+      extra = `<div>⚠ t検定（${pj(pt)}）とWilcoxon検定（${pj(pw)}）で結論が分かれています。判定は実行前に選択した主解析に従っています。</div>`;
     else if (pw !== null)
-      extra = `<div>Wilcoxon検定（${pj(pw)}）も同じ結論であり、結果は分布の仮定に対して頑健です。</div>`;
+      extra = `<div>補助解析も同じ有意性判定であり、結論は検定法の選択に対して頑健です。</div>`;
+    const effect = useW
+      ? `<div><b>効果量:</b> rank-biserial相関 = ${g4(kv.rrb)}（符号は第1群−第2群の方向）。</div>`
+      : `<div><b>効果量:</b> Hedges' g = ${g4(kv.hedges_g)}（符号は第2群−第1群の方向）。</div>`;
     return card(p < 0.05,
-      h0(`${escHtml(kv.g1)} と ${escHtml(kv.g2)} の母平均は等しい（2群に差はない）`) +
-      judge(p, `「2群の平均には統計学的に有意な差がある」と判断できます。${dir}`, NS_NOTE) + extra +
+      `<div><b>主解析:</b> ${useW ? 'Wilcoxon順位和検定' : 't検定'}（${pj(p)}）</div>` +
+      h0(useW ? `${escHtml(kv.g1)} と ${escHtml(kv.g2)} の分布位置は等しい` : `${escHtml(kv.g1)} と ${escHtml(kv.g2)} の母平均は等しい`) +
+      judge(p, `「2群には統計学的に有意な差がある」と判断できます。${dir}`, NS_NOTE) + effect + extra +
       `<div style="opacity:.85">※ 有意かどうかと差の大きさ（臨床的な意味）は別です。平均差と95%信頼区間も併せて確認・報告しましょう。</div>`);
   },
   paired: kv => {
-    const p = Pn(kv.p_t); if (p === null) return '';
-    const pw = Pn(kv.p_w), md = Pn(kv.mdiff), psh = Pn(kv.p_sh);
+    const pt = Pn(kv.p_t), pw = Pn(kv.p_w);
+    const useW = kv.primary === 'wilcox' && pw !== null;
+    const p = useW ? pw : pt; if (p === null) return '';
+    const md = Pn(kv.mdiff), psh = Pn(kv.p_sh);
     const dir = md !== null ? `平均で ${g4(Math.abs(md))} ${md > 0 ? '増加' : '減少'}しています。` : '';
     let pref = '';
-    if (psh !== null && psh < 0.05)
-      pref = `<div>⚠ 差の分布が正規分布から外れている可能性があるため（Shapiro-Wilk ${pj(psh)}）、<b>Wilcoxon符号付き順位検定（${pw !== null ? pj(pw) : '—'}）の結果を主に採用</b>することをお勧めします。</div>`;
+    if (!useW && psh !== null && psh < 0.05)
+      pref = `<div>⚠ 差の正規性に疑いがあります（Shapiro-Wilk ${pj(psh)}）。主解析は事前選択どおりt検定ですが、Wilcoxon検定（${pw !== null ? pj(pw) : '—'}）も感度分析として確認してください。</div>`;
     return card(p < 0.05,
-      h0('前後で母平均に変化はない（差の平均 = 0）') +
-      judge(p, `「前後で値は統計学的に有意に変化した」と判断できます。${dir}`, NS_NOTE) + pref);
+      `<div><b>主解析:</b> ${useW ? 'Wilcoxon符号付き順位検定' : '対応のあるt検定'}（${pj(p)}）</div>` +
+      h0(useW ? '前後差の分布は0を中心として対称である' : '前後で母平均に変化はない（差の平均 = 0）') +
+      judge(p, `「前後で値は統計学的に有意に変化した」と判断できます。${dir}`, NS_NOTE) +
+      (useW ? `<div><b>効果量:</b> 対応のあるrank-biserial相関 = ${g4(kv.rrb_paired)}。</div>`
+            : `<div><b>効果量:</b> Cohen's dz = ${g4(kv.cohen_dz)}。</div>`) + pref);
   },
   multi: kv => {
-    const p = Pn(kv.p_anova); if (p === null) return '';
-    const pkw = Pn(kv.p_kw), k = Pn(kv.k), ns = Pn(kv.nsig);
+    const pa = Pn(kv.p_anova), pkw = Pn(kv.p_kw);
+    const useKW = kv.primary === 'kruskal' && pkw !== null;
+    const p = useKW ? pkw : pa; if (p === null) return '';
+    const k = Pn(kv.k), ns = Pn(useKW ? kv.nsig_pw : kv.nsig);
     let tukey = '';
     if (p < 0.05) tukey = ns > 0
-      ? `<div>Tukey HSDでは <b>${ns}組のペア</b>が有意（p adj &lt; 0.05）でした。どのペアかは上の表で確認してください。</div>`
-      : `<div>ただしTukey HSDで有意なペアはありませんでした（全体としては差があるが、特定のペアまでは絞れない状態です）。</div>`;
+      ? `<div>${useKW ? 'Holm補正したペアごとのWilcoxon検定' : 'Tukey HSD'}では <b>${ns}組のペア</b>が有意でした。どのペアかは上の表で確認してください。</div>`
+      : `<div>調整済み多重比較で有意なペアはありませんでした。</div>`;
     let kwn = '';
-    if (pkw !== null && ((p < 0.05) !== (pkw < 0.05)))
-      kwn = `<div>⚠ ANOVAとKruskal-Wallis（${pj(pkw)}）で結論が分かれています。分布が偏っている場合はKruskal-Wallisを優先してください。</div>`;
+    if (pa !== null && pkw !== null && ((pa < 0.05) !== (pkw < 0.05)))
+      kwn = `<div>⚠ ANOVA（${pj(pa)}）とKruskal-Wallis（${pj(pkw)}）で結論が分かれています。判定は実行前に選択した主解析に従っています。</div>`;
     return card(p < 0.05,
-      h0(`${k ?? ''}群すべての母平均は等しい`) +
-      judge(p, '「少なくともどこか1組の群間に差がある」と判断できます（どの群間かはANOVA単独では分かりません）。', NS_NOTE) + tukey + kwn);
+      `<div><b>主解析:</b> ${useKW ? 'Kruskal-Wallis検定' : '一元配置ANOVA'}（${pj(p)}）</div>` +
+      h0(useKW ? `${k ?? ''}群の分布位置は等しい` : `${k ?? ''}群すべての母平均は等しい`) +
+      judge(p, '「少なくともどこか1組の群間に差がある」と判断できます。', NS_NOTE) +
+      `<div><b>効果量:</b> ${useKW ? `ε² = ${g4(kv.epsilon2)}` : `η² = ${g4(kv.eta2)}`}。</div>` + tukey + kwn);
   },
   cat: kv => {
     const pc = Pn(kv.p_chi), pf = Pn(kv.p_fisher), me = Pn(kv.minexp);
@@ -657,6 +741,7 @@ const INTERPRET = {
       h0('2つの変数は独立である（関連がない）') + which +
       judge(p, '「2つの変数には統計学的に有意な関連がある」と判断できます。どの組み合わせが多いかは行%で確認しましょう。',
         '関連があるという十分な証拠は得られませんでした。' ) +
+      `<div><b>効果量:</b> Cramér's V = ${g4(kv.cramer_v)}。</div>` +
       `<div style="opacity:.85">※ 関連がある＝因果関係がある、ではありません。</div>`);
   },
   mcnemar: kv => {
@@ -669,9 +754,12 @@ const INTERPRET = {
       dir = `<div>変化の内訳: 「${escHtml(kv.l1)}→${escHtml(kv.l2)}」が ${a12}人、「${escHtml(kv.l2)}→${escHtml(kv.l1)}」が ${a21}人。${a12 === a21 ? '両方向が同数です。' : `<b>${a12 > a21 ? escHtml(kv.l1)+'→'+escHtml(kv.l2) : escHtml(kv.l2)+'→'+escHtml(kv.l1)}</b> 方向への変化が優勢です。`}</div>`;
     }
     const note = pex !== null ? `<div>不一致ペアが少ないため、二項検定（正確法）のp値で判定しています。</div>` : '';
+    const effect = kv.risk_diff !== undefined
+      ? `<div><b>効果量:</b> 対応のある割合差（後−前）= ${g4(kv.risk_diff)}。</div>` : '';
     return card(p < 0.05,
       h0('前後で割合は変化していない（両方向の変化が同じ頻度で起こる）') +
-      judge(p, '「前後で割合は統計学的に有意に変化した」と判断できます。', NS_NOTE) + dir + note);
+      judge(p, '「前後で割合は統計学的に有意に変化した」と判断できます。', NS_NOTE) + dir +
+      effect + note);
   },
   cor: kv => {
     const r = Pn(kv.r), pp = Pn(kv.p_p), rho = Pn(kv.rho), ps = Pn(kv.p_s);
@@ -741,18 +829,19 @@ const ANALYSES = [
       {key:'g', label:'群分け変数（2水準）', kind:'single', filter:'all'},
     ],
     opts:[ {key:'welch', label:'Welch補正（等分散を仮定しない・推奨）', def:true},
-           {key:'wilcox', label:'Wilcoxon順位和検定も実施', def:true} ],
+           {key:'wilcox', label:'Wilcoxon順位和検定も実施', def:true},
+           {key:'primaryNonparam', label:'主解析をWilcoxon順位和検定にする（実行前に選択）', def:false} ],
     plot:true },
   { id:'paired', label:'対応のある比較', desc:'同一対象の前後測定など、対応のある連続値の比較。対応のあるt検定とWilcoxon符号付き順位検定を行います。',
     fields:[
       {key:'a', label:'変数 1（前）', kind:'single', filter:'num'},
       {key:'b', label:'変数 2（後）', kind:'single', filter:'num'},
-    ], plot:true },
+    ], opts:[{key:'primaryNonparam', label:'主解析をWilcoxon符号付き順位検定にする（実行前に選択）', def:false}], plot:true },
   { id:'multi', label:'多群比較', desc:'3群以上の連続変数の比較。一元配置ANOVA＋Tukey HSD、およびKruskal-Wallis検定を実施します。',
     fields:[
       {key:'y', label:'アウトカム（連続変数）', kind:'single', filter:'num'},
       {key:'g', label:'群分け変数（3水準以上）', kind:'single', filter:'all'},
-    ], plot:true },
+    ], opts:[{key:'primaryNonparam', label:'主解析をKruskal-Wallis検定にする（実行前に選択）', def:false}], plot:true },
   { id:'cat', label:'分割表の検定', desc:'2つのカテゴリ変数のクロス集計と χ²検定・Fisher正確検定を行います。',
     fields:[
       {key:'a', label:'変数 1（行）', kind:'single', filter:'all'},
@@ -775,12 +864,12 @@ const ANALYSES = [
       {key:'x', label:'変数 X', kind:'single', filter:'num'},
       {key:'y', label:'変数 Y', kind:'single', filter:'num'},
     ], plot:true },
-  { id:'lm', label:'線形回帰', desc:'重回帰分析（lm）。係数・95%信頼区間・決定係数を出力します。',
+  { id:'lm', label:'線形回帰', desc:'重回帰分析（lm）。係数・95%信頼区間に加え、残差・等分散性・影響点・多重共線性を診断します。',
     fields:[
       {key:'y', label:'目的変数（連続変数）', kind:'single', filter:'num'},
       {key:'x', label:'説明変数（複数選択可）', kind:'multi', filter:'all'},
     ], plot:false },
-  { id:'glm', label:'ロジスティック回帰', desc:'2値アウトカムのロジスティック回帰（glm, binomial）。オッズ比と95%CIを出力します。',
+  { id:'glm', label:'ロジスティック回帰', desc:'2値アウトカムのロジスティック回帰。オッズ比・95%CIに加え、収束・分離・EPV・校正・判別能を診断します。',
     fields:[
       {key:'y', label:'目的変数（2値）', kind:'single', filter:'all'},
       {key:'x', label:'説明変数（複数選択可）', kind:'multi', filter:'all'},
@@ -790,8 +879,12 @@ const ANALYSES = [
       {key:'y', label:'アウトカム（2値）', kind:'single', filter:'all'},
       {key:'x', label:'検査値・マーカー（連続変数）', kind:'single', filter:'num'},
     ], plot:true },
-  { id:'synth', label:'🎲 ダミーデータ生成', desc:'生成AI（ChatGPT等）に安全に渡すための偽データCSVを作ります。カテゴリ変数は「列名＋連番」のダミーラベル（例: 医師1, 医師2…）をカテゴリ数だけ作ってランダム割当（あり/なし等の2値変数は元の表記のまま）、日付・時刻列は元の期間内のランダムな日付に、数値変数はMin〜Maxの範囲内でランダムに生成します（分布は再現しません）。欠損（空セル）は同じ割合で再現。生成後にダウンロードボタンが出ます。',
-    fields:[],
+  { id:'synth', label:'🎲 ダミーデータ生成', desc:'コード・画面の動作確認用CSVを生成します。既定の共有安全モードでは列名・カテゴリ名・日付期間を一般化し、元値との一致を抑えます。匿名化を保証する機能ではありません。',
+    fields:[], opts:[
+      {key:'privacy', label:'共有安全モード（列名・ラベル・日付期間を一般化、推奨）', def:true},
+      {key:'exactMissing', label:'欠損数を列ごとに正確に維持する', def:true},
+      {key:'blockRisk', label:'安全モードOFF時、高リスク列があればCSV出力を停止する', def:true}
+    ],
     plot:false },
 ];
 
@@ -900,6 +993,12 @@ fmt_num <- function(z) {
   if (np) sprintf("%.4g [%.4g, %.4g]", median(z), quantile(z, .25), quantile(z, .75))
   else    sprintf("%.4g (%.4g)", mean(z), sd(z))
 }
+safe_p <- function(f) {
+  z <- tryCatch(f(), error = function(e) NULL)
+  if (is.null(z)) return(NA_real_)
+  p <- if (is.list(z) && !is.null(z$p.value)) z$p.value else z
+  if (!length(p) || !is.finite(p[1])) NA_real_ else as.numeric(p[1])
+}
 `;
     if (g){
       code +=
@@ -919,11 +1018,11 @@ for (v in vars) {
     vals <- setNames(c(fmt_num(x), sapply(glv, function(l) fmt_num(x[!is.na(grp) & grp == l]))), cols)
     ok <- !is.na(x) & !is.na(grp)
     if (length(glv) == 2) {
-      if (np) { p <- wilcox.test(x[ok] ~ grp[ok])$p.value; ts <- "Wilcoxon" }
-      else    { p <- t.test(x[ok] ~ grp[ok])$p.value;      ts <- "Welch t" }
+      if (np) { p <- safe_p(function() wilcox.test(x[ok] ~ grp[ok])); ts <- "Wilcoxon" }
+      else    { p <- safe_p(function() t.test(x[ok] ~ grp[ok]));      ts <- "Welch t" }
     } else {
-      if (np) { p <- kruskal.test(x[ok] ~ grp[ok])$p.value; ts <- "Kruskal-Wallis" }
-      else    { p <- summary(aov(x[ok] ~ grp[ok]))[[1]][["Pr(>F)"]][1]; ts <- "ANOVA" }
+      if (np) { p <- safe_p(function() kruskal.test(x[ok] ~ grp[ok])); ts <- "Kruskal-Wallis" }
+      else    { p <- safe_p(function() summary(aov(x[ok] ~ grp[ok]))[[1]][["Pr(>F)"]][1]); ts <- "ANOVA" }
     }
     add(paste0(v, if (np) ", 中央値 [IQR]" else ", 平均 (SD)"), vals, fmt_p(p), ts)
   } else {
@@ -931,12 +1030,14 @@ for (v in vars) {
     tab <- table(xf, grp)
     p <- NA; ts <- ""
     if (nrow(tab) >= 2 && ncol(tab) >= 2) {
-      ct <- suppressWarnings(chisq.test(tab))
-      if (any(ct$expected < 5) && nrow(tab) * ncol(tab) <= 20) {
-        ft <- try(fisher.test(tab, workspace = 2e6), silent = TRUE)
-        if (!inherits(ft, "try-error")) { p <- ft$p.value; ts <- "Fisher" }
-        else { p <- ct$p.value; ts <- "Chisq" }
-      } else { p <- ct$p.value; ts <- "Chisq" }
+      ct <- try(suppressWarnings(chisq.test(tab)), silent = TRUE)
+      if (!inherits(ct, "try-error")) {
+        if (any(ct$expected < 5) && nrow(tab) * ncol(tab) <= 20) {
+          ft <- try(fisher.test(tab, workspace = 2e6), silent = TRUE)
+          if (!inherits(ft, "try-error")) { p <- ft$p.value; ts <- "Fisher" }
+          else { p <- ct$p.value; ts <- "Chisq" }
+        } else { p <- ct$p.value; ts <- "Chisq" }
+      }
     }
     add(paste0(v, ", n (%)"), blank, fmt_p(p), ts)
     n_all <- sum(!is.na(xf))
@@ -989,11 +1090,14 @@ cat("@@TSV_BEGIN\\n"); write.table(out, sep = "\\t", row.names = FALSE, quote = 
   if (a.id === 'two'){
     const y = val('y'), g = val('g');
     if (!y || !g) return {err:'アウトカムと群分け変数を選択してください'};
+    const primaryNP = opt('primaryNonparam');
+    const runWilcox = opt('wilcox') || primaryNP;
     let code =
 `y <- ${col(y)}
 g <- factor(${col(g)})
 ok <- complete.cases(y, g); y <- y[ok]; g <- droplevels(g[ok])
 stopifnot("群分け変数は2水準にしてください" = nlevels(g) == 2)
+stopifnot("各群に2件以上のデータが必要です" = all(table(g) >= 2))
 cat("群別の要約:\\n")
 print(tapply(y, g, function(v) c(n = length(v), mean = mean(v), sd = sd(v), median = median(v))))
 cat("\\nShapiro-Wilk 正規性検定（群別）:\\n")
@@ -1006,10 +1110,16 @@ for (lv in levels(g)) {
 cat("\\n等分散性（F検定）:\\n"); print(var.test(y ~ g))
 cat("\\nt検定:\\n"); tt <- t.test(y ~ g, var.equal = ${opt('welch') ? 'FALSE' : 'TRUE'}); print(tt)
 m <- tapply(y, g, mean)
-cat(sprintf("@@KV p_t=%.6g\\n@@KV g1=%s\\n@@KV g2=%s\\n@@KV m1=%.6g\\n@@KV m2=%.6g\\n", tt$p.value, levels(g)[1], levels(g)[2], m[1], m[2]))
+n_by <- table(g); s_by <- tapply(y, g, sd)
+sp <- sqrt(((n_by[1] - 1) * s_by[1]^2 + (n_by[2] - 1) * s_by[2]^2) / (sum(n_by) - 2))
+hedges_g <- if (is.finite(sp) && sp > 0) (1 - 3 / (4 * sum(n_by) - 9)) * (m[2] - m[1]) / sp else NA_real_
+cat(sprintf("効果量 Hedges' g（第2群−第1群）= %.3f\\n", hedges_g))
+cat(sprintf("@@KV primary=${primaryNP ? 'wilcox' : 't'}\\n@@KV p_t=%.6g\\n@@KV g1=%s\\n@@KV g2=%s\\n@@KV m1=%.6g\\n@@KV m2=%.6g\\n@@KV hedges_g=%.6g\\n", tt$p.value, levels(g)[1], levels(g)[2], m[1], m[2], hedges_g))
 `;
-    if (opt('wilcox')) code += `cat("\\nWilcoxon順位和検定:\\n"); wt <- suppressWarnings(wilcox.test(y ~ g)); print(wt)
-cat(sprintf("@@KV p_w=%.6g\\n", wt$p.value))
+    if (runWilcox) code += `cat("\\nWilcoxon順位和検定:\\n"); wt <- suppressWarnings(wilcox.test(y ~ g)); print(wt)
+rrb <- 2 * as.numeric(wt$statistic) / (n_by[1] * n_by[2]) - 1
+cat(sprintf("効果量 rank-biserial相関（第1群−第2群）= %.3f\\n", rrb))
+cat(sprintf("@@KV p_w=%.6g\\n@@KV rrb=%.6g\\n", wt$p.value, rrb))
 `;
     code += `boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "${escR(y)}", col = c("#9FC4E8", "#F2C9A0"))\n`;
     return {code};
@@ -1022,14 +1132,22 @@ cat(sprintf("@@KV p_w=%.6g\\n", wt$p.value))
 `y <- ${col(y)}
 g <- factor(${col(g)})
 ok <- complete.cases(y, g); y <- y[ok]; g <- droplevels(g[ok])
+stopifnot("群分け変数は3水準以上にしてください" = nlevels(g) >= 3)
+stopifnot("各群に2件以上のデータが必要です" = all(table(g) >= 2))
 cat(sprintf("群数: %d\\n群別の要約:\\n", nlevels(g)))
 print(tapply(y, g, function(v) c(n = length(v), mean = mean(v), sd = sd(v))))
 cat("\\n一元配置ANOVA:\\n")
 fit <- aov(y ~ g); sm <- summary(fit); print(sm)
 cat("\\nTukey HSD（多重比較）:\\n"); tk <- TukeyHSD(fit); print(tk)
 cat("\\nKruskal-Wallis検定:\\n"); kw <- kruskal.test(y ~ g); print(kw)
-cat(sprintf("@@KV p_anova=%.6g\\n@@KV p_kw=%.6g\\n@@KV k=%d\\n@@KV nsig=%d\\n",
-  sm[[1]][["Pr(>F)"]][1], kw$p.value, nlevels(g), sum(tk$g[, "p adj"] < 0.05)))
+cat("\\nペアごとのWilcoxon順位和検定（Holm補正）:\\n")
+pw <- suppressWarnings(pairwise.wilcox.test(y, g, p.adjust.method = "holm")); print(pw)
+eta2 <- sm[[1]][["Sum Sq"]][1] / sum(sm[[1]][["Sum Sq"]])
+epsilon2 <- max(0, (as.numeric(kw$statistic) - nlevels(g) + 1) / (length(y) - nlevels(g)))
+cat(sprintf("\\n効果量: eta squared = %.3f, epsilon squared = %.3f\\n", eta2, epsilon2))
+cat(sprintf("@@KV primary=${opt('primaryNonparam') ? 'kruskal' : 'anova'}\\n@@KV p_anova=%.6g\\n@@KV p_kw=%.6g\\n@@KV k=%d\\n@@KV nsig=%d\\n@@KV nsig_pw=%d\\n@@KV eta2=%.6g\\n@@KV epsilon2=%.6g\\n",
+  sm[[1]][["Pr(>F)"]][1], kw$p.value, nlevels(g), sum(tk$g[, "p adj"] < 0.05),
+  sum(pw$p.value < 0.05, na.rm = TRUE), eta2, epsilon2))
 boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "${escR(y)}", col = "#9FC4E8")
 `};
   }
@@ -1039,10 +1157,13 @@ boxplot(y ~ g, main = "${escR(y)} by ${escR(g)}", xlab = "${escR(g)}", ylab = "$
     if (!A || !B) return {err:'変数を2つ選択してください'};
     return {code:
 `tab <- table(${col(A)}, ${col(B)})
+stopifnot("各変数は2水準以上にしてください" = nrow(tab) >= 2 && ncol(tab) >= 2)
 cat("クロス集計表:\\n"); print(tab)
 cat("\\n行%:\\n"); print(round(prop.table(tab, 1) * 100, 1))
 cat("\\nχ²検定:\\n"); ct <- suppressWarnings(chisq.test(tab)); print(ct)
 cat("期待度数:\\n"); print(round(ct$expected, 2))
+cramer_v <- sqrt(as.numeric(ct$statistic) / (sum(tab) * min(nrow(tab) - 1, ncol(tab) - 1)))
+cat(sprintf("効果量 Cramér's V = %.3f\\n", cramer_v))
 if (nrow(tab) * ncol(tab) <= 20) {
   fis <- try(fisher.test(tab, workspace = 2e6), silent = TRUE)
   if (!inherits(fis, "try-error")) { cat("\\nFisher正確検定:\\n"); print(fis)
@@ -1051,7 +1172,7 @@ if (nrow(tab) * ncol(tab) <= 20) {
 } else {
   cat("\\nFisher正確検定: 表が大きいため省略しました\\n")
 }
-cat(sprintf("@@KV p_chi=%.6g\\n@@KV minexp=%.4g\\n", ct$p.value, min(ct$expected)))
+cat(sprintf("@@KV p_chi=%.6g\\n@@KV minexp=%.4g\\n@@KV cramer_v=%.6g\\n", ct$p.value, min(ct$expected), cramer_v))
 mosaicplot(tab, main = "${escR(A)} × ${escR(B)}", color = c("#9FC4E8","#F2C9A0","#BFD8B8","#D8B8D8","#E8D49F"))
 `};
   }
@@ -1067,6 +1188,7 @@ u <- sort(unique(c(as.character(a[ok]), as.character(b[ok]))))
 a <- factor(as.character(a[ok]), levels = u)
 b <- factor(as.character(b[ok]), levels = u)
 tab <- table(a, b, dnn = c("${escR(A)}", "${escR(B)}"))
+stopifnot("解析可能なペアがなく、2水準以上を確認できません" = nrow(tab) >= 2)
 cat(sprintf("対応のあるペア数: n = %d\\n\\nクロス集計表:\\n", sum(ok)))
 print(tab)
 cat("\\n不一致ペア（検定に効くのはこの非対角セルです）:\\n")
@@ -1075,6 +1197,9 @@ cat("\\nMcNemar検定（連続性補正あり）:\\n"); mc <- mcnemar.test(tab);
 cat("McNemar検定（補正なし）:\\n"); print(mcnemar.test(tab, correct = FALSE))
 cat(sprintf("@@KV p=%.6g\\n", mc$p.value))
 if (nrow(tab) == 2) {
+  risk_diff <- (tab[1,2] - tab[2,1]) / sum(tab)
+  cat(sprintf("対応のある割合差（後−前、%sの割合）= %.3f\\n", u[2], risk_diff))
+  cat(sprintf("@@KV risk_diff=%.6g\\n", risk_diff))
   cat(sprintf("@@KV l1=%s\\n@@KV l2=%s\\n@@KV a12=%d\\n@@KV a21=%d\\n", u[1], u[2], tab[1,2], tab[2,1]))
   d <- tab[1,2] + tab[2,1]
   if (d > 0 && d <= 25) {
@@ -1122,25 +1247,38 @@ if (is.numeric(e_raw)) {
   ev <- as.integer(f) - 1L
   cat(sprintf("イベント定義: %s = 0（打ち切り）, %s = 1（イベント発生）\\n\\n", levels(f)[1], levels(f)[2]))
 }
-d <- data.frame(.time = tm, .event = ev, check.names = FALSE)
+d_all <- data.frame(.time = tm, .event = ev, check.names = FALSE)
 `;
-    if (g) code += `d$.group <- factor(${col(g)})\n`;
-    covs.forEach((c, i) => { code += `d$.cov${i + 1} <- ${col(c)}\n`; });
-    code += `d <- d[complete.cases(d), ]
-cat(sprintf("解析対象: n = %d（選択した全変数が欠損なしの症例）, イベント数 = %d\\n\\n", nrow(d), sum(d$.event)))
+    if (g) code += `d_all$.group <- factor(${col(g)})\n`;
+    covs.forEach((c, i) => { code += `d_all$.cov${i + 1} <- ${col(c)}\n`; });
+    code += `km_vars <- c(".time", ".event"${g ? ', ".group"' : ''})
+d_km <- d_all[complete.cases(d_all[km_vars]), km_vars, drop = FALSE]
+cox_vars <- c(km_vars${covTerms.length ? ', ' + covTerms.map(x => '"' + x + '"').join(', ') : ''})
+d_cox <- d_all[complete.cases(d_all[cox_vars]), cox_vars, drop = FALSE]
+stopifnot("KM解析可能な症例がありません" = nrow(d_km) > 0)
+stopifnot("追跡期間は有限の0以上にしてください" = all(is.finite(d_km$.time) & d_km$.time >= 0))
+stopifnot("KM解析にイベント発生例が必要です" = sum(d_km$.event) > 0)
+cat(sprintf("KM / log-rank解析対象: n = %d（時間・イベント${g ? '・群' : ''}が欠損なし）, イベント数 = %d\\n", nrow(d_km), sum(d_km$.event)))
+${(g || covs.length) ? 'cat(sprintf("Cox解析対象: n = %d（モデル全変数が欠損なし）, イベント数 = %d\\\\n\\\\n", nrow(d_cox), sum(d_cox$.event)))' : 'cat("\\\\n")'}
 `;
     if (g){
       const rhs = ['.group', ...covTerms].join(' + ');
       code +=
-`grp <- droplevels(factor(d$.group))
+`grp <- droplevels(factor(d_km$.group))
+stopifnot("KM群分け変数は2水準以上にしてください" = nlevels(grp) >= 2)
 glv <- levels(grp)
-fit <- survfit(Surv(d$.time, d$.event) ~ grp)
+fit <- survfit(Surv(d_km$.time, d_km$.event) ~ grp)
 cat("Kaplan-Meier要約（群別・中央生存期間と95%CI）:\\n"); print(fit)
-sdf <- survdiff(Surv(d$.time, d$.event) ~ grp)
+sdf <- survdiff(Surv(d_km$.time, d_km$.event) ~ grp)
 cat("\\nLog-rank検定:\\n"); print(sdf)
 p_lr <- 1 - pchisq(sdf$chisq, length(sdf$n) - 1)
 cat("\\nCox比例ハザードモデル${covs.length ? '（共変量で調整したHR）' : ''}:\\n")
-cx <- coxph(Surv(.time, .event) ~ ${rhs}, data = d)
+stopifnot("Cox解析に十分な完全例とイベントが必要です" = nrow(d_cox) > 0 && sum(d_cox$.event) > 0)
+if (".group" %in% names(d_cox)) {
+  d_cox$.group <- droplevels(factor(d_cox$.group))
+  stopifnot("Cox解析の群分け変数は完全例で2水準以上必要です" = nlevels(d_cox$.group) >= 2)
+}
+cx <- coxph(Surv(.time, .event) ~ ${rhs}, data = d_cox)
 print(summary(cx))
 hr <- exp(cbind(HR = coef(cx), suppressMessages(confint(cx))))
 cat("ハザード比と95%信頼区間:\\n"); print(round(hr, 3))
@@ -1151,8 +1289,8 @@ if (nlevels(grp) == 2)
   cat(sprintf("@@KV hr=%.6g\\n@@KV lo=%.6g\\n@@KV hi=%.6g\\n@@KV ref=%s\\n@@KV cmp=%s\\n",
     hr[1,1], hr[1,2], hr[1,3], glv[1], glv[2]))
 # --- KM曲線 + Number at risk ---
-cols <- c("#276DC3", "#C0392B", "#1E7F4F", "#7A4E1D", "#6C3FA0")[seq_along(glv)]
-tp <- pretty(c(0, max(d$.time))); tp <- tp[tp >= 0 & tp <= max(d$.time) * 1.001]
+cols <- grDevices::hcl.colors(length(glv), "Dark 3")
+tp <- pretty(c(0, max(d_km$.time))); tp <- tp[tp >= 0 & tp <= max(d_km$.time) * 1.001]
 layout(matrix(1:2, ncol = 1), heights = c(3, 1.2 + 0.25 * length(glv)))
 par(mar = c(2.5, 5.5, 2, 2))
 plot(fit, col = cols, lwd = 2, xlim = range(tp), xlab = "", ylab = "Survival probability",
@@ -1172,9 +1310,9 @@ layout(1)
       if (covs.length) code += FP + `fp(hr, "Hazard ratio (log scale)")\n`;
     } else {
       code +=
-`fit <- survfit(Surv(d$.time, d$.event) ~ 1)
+`fit <- survfit(Surv(d_km$.time, d_km$.event) ~ 1)
 cat("Kaplan-Meier要約（中央生存期間と95%CI）:\\n"); print(fit)
-tp <- pretty(c(0, max(d$.time))); tp <- tp[tp >= 0 & tp <= max(d$.time) * 1.001]
+tp <- pretty(c(0, max(d_km$.time))); tp <- tp[tp >= 0 & tp <= max(d_km$.time) * 1.001]
 layout(matrix(1:2, ncol = 1), heights = c(3, 1.3))
 par(mar = c(2.5, 5.5, 2, 2))
 plot(fit, col = "#276DC3", lwd = 2, conf.int = TRUE, mark.time = TRUE, xlim = range(tp),
@@ -1191,7 +1329,8 @@ layout(1)
         const rhs2 = covTerms.join(' + ');
         code +=
 `cat("\\nCox比例ハザードモデル:\\n")
-cx <- coxph(Surv(.time, .event) ~ ${rhs2}, data = d)
+stopifnot("Cox解析に十分な完全例とイベントが必要です" = nrow(d_cox) > 0 && sum(d_cox$.event) > 0)
+cx <- coxph(Surv(.time, .event) ~ ${rhs2}, data = d_cox)
 print(summary(cx))
 hr <- exp(cbind(HR = coef(cx), suppressMessages(confint(cx))))
 cat("ハザード比と95%信頼区間:\\n"); print(round(hr, 3))
@@ -1211,6 +1350,7 @@ cat("\\n比例ハザード性の検定:\\n"); print(cox.zph(cx))
 x2 <- ${col(B)}  # 後
 ok <- complete.cases(x1, x2); x1 <- x1[ok]; x2 <- x2[ok]
 d <- x2 - x1
+stopifnot("2組以上の完全なペアが必要です" = length(d) >= 2)
 cat(sprintf("ペア数 n = %d\\n前:   平均 %.4g (SD %.4g)\\n後:   平均 %.4g (SD %.4g)\\n差（後−前）: 平均 %.4g (SD %.4g)\\n",
   length(d), mean(x1), sd(x1), mean(x2), sd(x2), mean(d), sd(d)))
 if (length(d) >= 3 && length(d) <= 5000) {
@@ -1220,7 +1360,10 @@ if (length(d) >= 3 && length(d) <= 5000) {
 }
 cat("\\n対応のあるt検定:\\n"); tt <- t.test(x2, x1, paired = TRUE); print(tt)
 cat("\\nWilcoxon符号付き順位検定:\\n"); wt <- suppressWarnings(wilcox.test(x2, x1, paired = TRUE)); print(wt)
-cat(sprintf("@@KV p_t=%.6g\\n@@KV p_w=%.6g\\n@@KV mdiff=%.6g\\n@@KV n=%d\\n", tt$p.value, wt$p.value, mean(d), length(d)))
+cohen_dz <- if (is.finite(sd(d)) && sd(d) > 0) mean(d) / sd(d) else NA_real_
+dnz <- d[d != 0]; rrb_paired <- if (length(dnz)) sum(sign(dnz) * rank(abs(dnz))) / sum(rank(abs(dnz))) else 0
+cat(sprintf("効果量: Cohen's dz = %.3f, 対応のあるrank-biserial相関 = %.3f\\n", cohen_dz, rrb_paired))
+cat(sprintf("@@KV primary=${opt('primaryNonparam') ? 'wilcox' : 't'}\\n@@KV p_t=%.6g\\n@@KV p_w=%.6g\\n@@KV mdiff=%.6g\\n@@KV n=%d\\n@@KV cohen_dz=%.6g\\n@@KV rrb_paired=%.6g\\n", tt$p.value, wt$p.value, mean(d), length(d), cohen_dz, rrb_paired))
 boxplot(list(Before = x1, After = x2), col = c("#9FC4E8", "#F2C9A0"), main = "Before / After")
 hist(d, main = "Difference (After - Before)", xlab = "difference", col = "#9FC4E8", border = "white")
 abline(v = 0, lty = 2, lwd = 2, col = "#C0392B")
@@ -1238,6 +1381,7 @@ ok <- complete.cases(pred, f); pred <- pred[ok]; f <- droplevels(f[ok])
 stopifnot("アウトカムは2値にしてください" = nlevels(f) == 2)
 outc <- as.integer(f) - 1L
 n1 <- sum(outc == 1); n0 <- sum(outc == 0)
+stopifnot("陽性・陰性それぞれ2件以上が必要です" = n1 >= 2 && n0 >= 2)
 cat(sprintf("陽性（イベント）の定義: %s = 1（n = %d）, %s = 0（n = %d）\\n\\n", levels(f)[2], n1, levels(f)[1], n0))
 w <- suppressWarnings(wilcox.test(pred[outc == 1], pred[outc == 0]))
 auc <- as.numeric(w$statistic) / (n1 * n0)
@@ -1271,6 +1415,7 @@ points(1 - spec[bi], sens[bi], pch = 19, cex = 1.2, col = "#C0392B")
     return {code:
 `x <- ${col(x)}; y <- ${col(y)}
 ok <- complete.cases(x, y); x <- x[ok]; y <- y[ok]
+stopifnot("相関分析には3組以上の完全なデータが必要です" = length(x) >= 3)
 cat(sprintf("n = %d\\n\\nPearson相関:\\n", length(x)))
 pe <- cor.test(x, y, method = "pearson"); print(pe)
 cat("\\nSpearman相関:\\n")
@@ -1289,14 +1434,44 @@ abline(lm(y ~ x), col = "#C0392B", lwd = 2)
     if (xs.includes(y)) return {err:'目的変数が説明変数にも含まれています'};
     const rhs = xs.map((_, i) => `.x${i + 1}`).join(' + ');
     const assignXs = xs.map((v, i) => `d$.x${i + 1} <- ${col(v)}`).join('\n');
+    const mappingLines = xs.map((v, i) => `cat("  .x${i + 1} = ${escR(v)}\\n")`).join('\n');
     if (a.id === 'lm'){
       return {code:
 `d <- data.frame(.response = ${col(y)}, check.names = FALSE)
 ${assignXs}
+cat("説明変数の対応:\\n")
+${mappingLines}
+cat("\\n")
 fit <- lm(.response ~ ${rhs}, data = d)
 print(summary(fit))
 cat("\\n95%信頼区間:\\n"); print(round(confint(fit), 4))
 cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
+mf <- model.frame(fit); n_fit <- nrow(mf)
+cat(sprintf("\\n===== 回帰診断 =====\\n解析対象 n = %d（欠損で除外: %d）\\n", n_fit, nrow(d) - n_fit))
+X <- model.matrix(fit)
+cat(sprintf("モデル行列: %d列, rank = %d, condition number = %.2f\\n", ncol(X), fit$rank, kappa(X)))
+if (fit$rank < ncol(X)) cat("⚠ 完全な多重共線性があり、推定不能な係数があります。\\n")
+if (ncol(X) > 2) {
+  Xn <- X[, -1, drop = FALSE]
+  vif <- sapply(seq_len(ncol(Xn)), function(j) {
+    if (sd(Xn[,j]) == 0) return(Inf)
+    if (ncol(Xn) == 1) return(1)
+    1 / (1 - summary(lm(Xn[,j] ~ Xn[,-j,drop=FALSE]))$r.squared)
+  })
+  names(vif) <- colnames(Xn); cat("\\n列単位VIF（5超で要確認）:\\n"); print(round(vif, 2))
+}
+res <- residuals(fit); fv <- fitted(fit)
+if (length(res) >= 3 && length(res) <= 5000) {
+  sw <- shapiro.test(res); cat(sprintf("\\n残差のShapiro-Wilk検定: p = %.4g\\n", sw$p.value))
+}
+bp_fit <- lm(I(res^2) ~ fv); bp <- n_fit * summary(bp_fit)$r.squared
+bp_p <- pchisq(bp, df = 1, lower.tail = FALSE)
+cat(sprintf("等分散性の近似検定（Breusch-Pagan型）: χ² = %.3f, p = %.4g\\n", bp, bp_p))
+cd <- cooks.distance(fit); cut <- 4 / n_fit
+cat(sprintf("Cook's distance: 最大 %.3f, 4/n (%.3f) 超 = %d件\\n", max(cd, na.rm=TRUE), cut, sum(cd > cut, na.rm=TRUE)))
+if (bp_p < 0.05) cat("⚠ 不均一分散の可能性があります。残差図と頑健標準誤差を検討してください。\\n")
+if (any(cd > cut, na.rm=TRUE)) cat("⚠ 影響の強い観測を個別に確認してください。\\n")
+par(mfrow = c(2, 2)); plot(fit, which = 1:4); par(mfrow = c(1, 1))
 `};
     }
     return {code:
@@ -1305,11 +1480,62 @@ stopifnot("目的変数は2値にしてください" = nlevels(droplevels(yv[!is
 d <- data.frame(.outcome = as.integer(yv) - 1L, check.names = FALSE)
 ${assignXs}
 cat(sprintf("アウトカム: %s=0, %s=1\\n\\n", levels(yv)[1], levels(yv)[2]))
-fit <- glm(.outcome ~ ${rhs}, data = d, family = binomial)
+cat("説明変数の対応:\\n")
+${mappingLines}
+cat("\\n")
+glm_warnings <- character()
+fit <- withCallingHandlers(
+  glm(.outcome ~ ${rhs}, data = d, family = binomial),
+  warning = function(w) { glm_warnings <<- c(glm_warnings, conditionMessage(w)); invokeRestart("muffleWarning") }
+)
 print(summary(fit))
-or <- exp(cbind(OR = coef(fit), suppressMessages(confint(fit))))
+or <- exp(cbind(OR = coef(fit), confint.default(fit)))
 cat("\\nオッズ比と95%信頼区間:\\n"); print(round(or, 3))
 cat(sprintf("\\nAIC = %.1f\\n", AIC(fit)))
+mf <- model.frame(fit); yy <- model.response(mf); pr <- fitted(fit); n_fit <- nrow(mf)
+events <- sum(yy == 1); nonevents <- sum(yy == 0); p_model <- max(1, fit$rank - 1)
+stopifnot("完全例にイベント・非イベントの両方が必要です" = min(events, nonevents) > 0)
+epv <- min(events, nonevents) / p_model
+cat(sprintf("\\n===== 回帰診断 =====\\n解析対象 n = %d（欠損で除外: %d）, イベント = %d, 非イベント = %d\\n", n_fit, nrow(d) - n_fit, events, nonevents))
+cat(sprintf("収束: %s / EPV（少ない方のアウトカム数÷パラメータ数）= %.2f\\n", if (isTRUE(fit$converged)) "成功" else "失敗", epv))
+if (length(glm_warnings)) cat("⚠ GLM警告: ", paste(unique(glm_warnings), collapse = " | "), "\\n", sep="")
+sep_flag <- any(!is.finite(coef(fit))) || any(abs(coef(fit)) > 10, na.rm=TRUE) ||
+  any(coef(summary(fit))[, "Std. Error"] > 10, na.rm=TRUE) || any(pr < 1e-6 | pr > 1 - 1e-6)
+cat(sprintf("完全分離・準完全分離の兆候: %s\\n", if (sep_flag) "あり（係数・予測確率を要確認）" else "明確な兆候なし"))
+if (epv < 10) cat("⚠ EPVが10未満で、係数推定が不安定な可能性があります。\\n")
+brier <- mean((yy - pr)^2)
+auc <- (sum(rank(pr)[yy == 1]) - events * (events + 1) / 2) / (events * nonevents)
+cat(sprintf("Brier score = %.4f（小さいほど良い） / 見かけのAUC = %.3f\\n", brier, auc))
+br <- unique(quantile(pr, probs = seq(0, 1, length.out = min(11, n_fit + 1)), na.rm = TRUE))
+cal_ok <- length(br) >= 4
+if (cal_ok) {
+  cg <- cut(pr, breaks = br, include.lowest = TRUE)
+  cal <- aggregate(cbind(observed = yy, predicted = pr), list(group = cg), mean)
+  cal$n <- as.numeric(table(cg)[as.character(cal$group)])
+  exp_event <- cal$predicted * cal$n
+  keep <- exp_event > 0 & exp_event < cal$n
+  hl <- sum((cal$observed[keep] * cal$n[keep] - exp_event[keep])^2 /
+            (exp_event[keep] * (1 - exp_event[keep] / cal$n[keep])))
+  hl_df <- max(1, sum(keep) - 2); hl_p <- pchisq(hl, hl_df, lower.tail = FALSE)
+  cat(sprintf("Hosmer-Lemeshow型校正検定: χ² = %.3f, df = %d, p = %.4g（小標本では参考値）\\n", hl, hl_df, hl_p))
+}
+X <- model.matrix(fit)
+cat(sprintf("モデル行列: %d列, rank = %d, condition number = %.2f\\n", ncol(X), fit$rank, kappa(X)))
+if (ncol(X) > 2) {
+  Xn <- X[, -1, drop = FALSE]
+  vif <- sapply(seq_len(ncol(Xn)), function(j) {
+    if (sd(Xn[,j]) == 0) return(Inf)
+    if (ncol(Xn) == 1) return(1)
+    1 / (1 - summary(lm(Xn[,j] ~ Xn[,-j,drop=FALSE]))$r.squared)
+  })
+  names(vif) <- colnames(Xn); cat("\\n列単位VIF（5超で要確認）:\\n"); print(round(vif, 2))
+}
+cd <- cooks.distance(fit); cut_cd <- 4 / n_fit
+cat(sprintf("Cook's distance: 最大 %.3f, 4/n (%.3f) 超 = %d件\\n", max(cd, na.rm=TRUE), cut_cd, sum(cd > cut_cd, na.rm=TRUE)))
+par(mfrow = c(1, 2))
+plot(pr, residuals(fit, type="deviance"), pch=19, col="#276DC388", xlab="Fitted probability", ylab="Deviance residual", main="Residuals vs fitted"); abline(h=0,lty=2)
+if (cal_ok) { plot(cal$predicted, cal$observed, pch=19, xlim=c(0,1), ylim=c(0,1), xlab="Mean predicted", ylab="Observed proportion", main="Calibration"); abline(0,1,lty=2) } else plot.new()
+par(mfrow = c(1, 1))
 fp <- function(m, xlab) {
   m <- m[is.finite(m[,1]) & is.finite(m[,2]) & is.finite(m[,3]), , drop = FALSE]
   k <- nrow(m); if (k == 0) return(invisible())
@@ -1331,9 +1557,12 @@ if (nrow(or) > 1) fp(or[-1, , drop = FALSE], "Odds ratio (log scale)")
 
   if (a.id === 'synth'){
     return {code:
-`## ===== ダミーデータ生成（実データの値は出力されません） =====
+`## ===== ダミーデータ生成（元データから独立に再生成） =====
 set.seed(NULL)               # 毎回異なる乱数
 n <- nrow(df)
+privacy_mode <- ${opt('privacy') ? 'TRUE' : 'FALSE'}
+exact_missing <- ${opt('exactMissing') ? 'TRUE' : 'FALSE'}
+block_on_risk <- ${opt('blockRisk') ? 'TRUE' : 'FALSE'}
 
 # 数値列で使う小数桁数を推定（0 を返したら整数列）
 n_dec <- function(v) {
@@ -1380,31 +1609,55 @@ dt_range <- function(v, dt) {            # 実/偽の期間を同じ書式で表
   format(as.POSIXct(c(min(p), max(p)), origin = "1970-01-01", tz = "UTC"), dt$fmt)
 }
 
-# 1列を合成する
-#   数値      : Min〜Max の一様乱数（整数列は整数、小数列は元の小数桁で丸め）
-#   日付/日時 : 元の期間内のランダムな日付（同じ書式で出力）
-#   カテゴリ  : 2値は元の表記のまま、3水準以上は「<列名>1, <列名>2 …」をランダム割当
-#   欠損(NA)  : 元データと同じ割合で再現
+# 列ごとの開示リスクを検査（列名、高一意率、日付、長い自由記述、少数カテゴリ）
+risk_reason <- function(x, nm) {
+  obs <- x[!is.na(x)]; reasons <- character()
+  if (grepl("(^|[_ -])(id|name|email|phone|address|mrn|patient|subject)($|[_ -])|氏名|住所|電話|患者|被験者|識別", nm, ignore.case=TRUE))
+    reasons <- c(reasons, "識別子を示す列名")
+  if (length(obs) && length(unique(as.character(obs))) / length(obs) >= 0.8)
+    reasons <- c(reasons, "一意率80%以上")
+  if (!is.numeric(x) && !is.null(detect_dt(obs))) reasons <- c(reasons, "日付・時刻")
+  if (!is.numeric(x) && length(obs) && median(nchar(as.character(obs))) >= 30) reasons <- c(reasons, "長い自由記述")
+  tb <- table(as.character(obs))
+  if (length(tb) >= 2 && any(tb < 5)) reasons <- c(reasons, "5件未満の少数カテゴリ")
+  unique(reasons)
+}
+risk <- lapply(names(df), function(nm) risk_reason(df[[nm]], nm))
+risk_cols <- which(lengths(risk) > 0)
+blocked <- !privacy_mode && block_on_risk && (length(risk_cols) > 0 || n < 30)
+
+# 1列を合成する。共有安全モードでは実際の列名・ラベル・期間・値域を使わない。
 synth_col <- function(x, nm) {
-  out <- rep(NA, n)
-  miss_rate <- mean(is.na(x))
+  miss_n <- sum(is.na(x)); out <- rep(NA, n)
+  keep_n <- n - miss_n
   obs <- x[!is.na(x)]
-  if (length(obs)) {
+  if (length(obs) && keep_n > 0) {
     if (is.numeric(x)) {
       lo <- min(obs); hi <- max(obs); dec <- n_dec(obs)
-      sim <- runif(n, lo, hi)
-      out <- if (dec == 0) round(sim) else round(sim, dec)
+      if (privacy_mode) {
+        if (length(unique(obs)) <= 2 && all(obs %in% c(0, 1))) sim <- sample(c(0, 1), keep_n, replace=TRUE)
+        else if (dec == 0 && length(unique(obs)) / length(obs) >= 0.8) sim <- sample(seq.int(100001L, 100000L + keep_n))
+        else sim <- pmin(100, pmax(0, rnorm(keep_n, 50, 15)))
+      } else if (hi > lo) sim <- runif(keep_n, lo, hi)
+      else sim <- rep(if (lo == 0) 1 else 0, keep_n)
+      vals <- if (dec == 0) round(sim) else round(sim, dec)
     } else {
       dt <- detect_dt(obs)
-      if (!is.null(dt)) {                          # 日付/日時/時刻
-        out <- format(as.POSIXct(runif(n, dt$lo, dt$hi), origin = "1970-01-01", tz = "UTC"), dt$fmt)
+      if (!is.null(dt)) {
+        if (privacy_mode) {
+          base_lo <- if (dt$kind == "time") as.numeric(as.POSIXct("1970-01-01 00:00:00", tz="UTC")) else as.numeric(as.POSIXct("2020-01-01", tz="UTC"))
+          base_hi <- if (dt$kind == "time") base_lo + 86399 else as.numeric(as.POSIXct("2020-12-31 23:59:59", tz="UTC"))
+          vals <- format(as.POSIXct(runif(keep_n, base_lo, base_hi), origin="1970-01-01", tz="UTC"), dt$fmt)
+        } else vals <- format(as.POSIXct(runif(keep_n, dt$lo, dt$hi), origin="1970-01-01", tz="UTC"), dt$fmt)
       } else {
-        u <- sort(unique(as.character(obs)))        # 出現カテゴリ
-        labels <- if (length(u) == 2) u else paste0(nm, seq_len(length(u)))  # 2値は元表記を維持
-        out <- sample(labels, n, replace = TRUE)    # ランダムに割当
+        u <- sort(unique(as.character(obs)))
+        labels <- if (privacy_mode) paste0("category_", seq_len(length(u))) else if (length(u) == 2) u else paste0(nm, seq_len(length(u)))
+        vals <- sample(rep(labels, length.out = keep_n), keep_n)
       }
     }
-    if (miss_rate > 0) out[runif(n) < miss_rate] <- NA
+    miss_idx <- if (exact_missing) sample(seq_len(n), miss_n) else which(runif(n) < mean(is.na(x)))
+    keep_idx <- setdiff(seq_len(n), miss_idx)
+    if (length(keep_idx)) out[keep_idx] <- rep(vals, length.out=length(keep_idx))
   }
   out
 }
@@ -1413,40 +1666,31 @@ fake <- as.data.frame(
   setNames(lapply(names(df), function(nm) synth_col(df[[nm]], nm)), names(df)),
   stringsAsFactors = FALSE, check.names = FALSE)
 
-cat(sprintf("ダミーデータを生成しました: %d 行 × %d 列\\n（実データの値は含まれていません）\\n\\nプレビュー（先頭6行）:\\n", nrow(fake), ncol(fake)))
-print(utils::head(fake, 6))
-
-cat("\\n--- 構造が保たれているか（実データ → ダミー）---\\n")
-for (nm in names(df)) {
-  x <- df[[nm]]
-  miss <- sprintf("（欠損 実%.0f%% / 偽%.0f%%）", 100 * mean(is.na(x)), 100 * mean(is.na(fake[[nm]])))
-  if (is.numeric(x)) {
-    dec <- n_dec(x[!is.na(x)])
-    cat(sprintf("%s（数値・%s）: 実 範囲 %.4g〜%.4g → 偽 範囲 %.4g〜%.4g%s\\n", nm,
-      if (dec == 0) "整数" else paste0("小数", dec, "桁"),
-      min(x, na.rm = TRUE), max(x, na.rm = TRUE),
-      min(fake[[nm]], na.rm = TRUE), max(fake[[nm]], na.rm = TRUE), miss))
-  } else {
-    dt <- detect_dt(x[!is.na(x)])
-    if (!is.null(dt)) {
-      lab <- c(datetime = "日時", date = "日付", time = "時刻")[[dt$kind]]
-      rr <- dt_range(x, dt); fr <- dt_range(fake[[nm]], dt)
-      cat(sprintf("%s（%s）: 実 %s〜%s → 偽 %s〜%s%s\\n", nm, lab, rr[1], rr[2], fr[1], fr[2], miss))
-    } else {
-      lbls <- sort(unique(na.omit(as.character(fake[[nm]]))))
-      k <- length(unique(na.omit(as.character(x))))
-      cat(sprintf("%s（カテゴリ・%s）: 実 %d 種 → 偽 %d 種（%s%s）%s\\n", nm,
-        if (k == 2) "2値=元表記" else "連番ラベル", k, length(lbls),
-        paste(utils::head(lbls, 3), collapse = ", "), if (length(lbls) > 3) " …" else "", miss))
-    }
-  }
+if (privacy_mode) names(fake) <- sprintf("variable_%02d", seq_along(fake))
+cat(sprintf("ダミーデータ生成モード: %s\\n", if (privacy_mode) "共有安全（列名・全カテゴリラベル・日付期間・数値尺度を一般化）" else "構造優先（元の列名・一部ラベル・値域を使用）"))
+cat(sprintf("開示リスク検査: %d列で注意項目%s\\n", length(risk_cols), if (n < 30) "、さらに30行未満の小規模データ" else ""))
+if (length(risk_cols)) {
+  if (privacy_mode) cat("  安全モードのため列名は表示しません。元データ側で識別子・日付・高一意率・少数カテゴリを確認してください。\\n")
+  else for (i in risk_cols) cat(sprintf("  ⚠ %s: %s\\n", names(df)[i], paste(risk[[i]], collapse=", ")))
 }
+cat("注意: この検査と生成処理は匿名化・非識別化を保証しません。外部共有には組織の審査が必要です。\\n")
 
-# CSVテキストをマーカーで囲んで書き出し（UI側がダウンロード化）
-tc <- textConnection("csvout", "w", local = TRUE)
-write.csv(fake, tc, row.names = FALSE, na = "")
-close(tc)
-cat("@@CSV_BEGIN\\n"); cat(paste(csvout, collapse = "\\n")); cat("\\n@@CSV_END\\n")
+if (blocked) {
+  cat("\\n⛔ 高リスク列または小規模データを検出したためCSV出力を停止しました。共有安全モードをONにするか、元CSVから識別性のある列を削除してください。\\n")
+} else {
+  cat(sprintf("\\nダミーデータを生成しました: %d 行 × %d 列\\nプレビュー（先頭6行）:\\n", nrow(fake), ncol(fake)))
+  print(utils::head(fake, 6))
+  cat("\\n--- ダミーCSVだけの構造診断（元データの値域・期間は表示しません）---\\n")
+  for (i in seq_along(fake)) {
+    x <- fake[[i]]; obs <- x[!is.na(x)]
+    typ <- if (is.numeric(x)) "数値" else if (!is.null(detect_dt(obs))) "日付/時刻" else "カテゴリ"
+    cat(sprintf("%s: %s, 欠損 %d件, ダミー内の異なる値 %d個\\n", names(fake)[i], typ, sum(is.na(x)), length(unique(as.character(obs)))))
+  }
+  tc <- textConnection("csvout", "w", local = TRUE)
+  write.csv(fake, tc, row.names = FALSE, na = "")
+  close(tc)
+  cat("@@CSV_BEGIN\\n"); cat(paste(csvout, collapse = "\\n")); cat("\\n@@CSV_END\\n")
+}
 `};
   }
 
@@ -1461,12 +1705,13 @@ async function runR(code, container, analysisId){
     <div class="rcode"><div class="bar"><span># 実行したRコード</span><button data-copy>コピー</button></div><pre>${escHtml(code)}</pre></div>
     <div class="rout">実行中… <span style="opacity:.5">（パッケージ読込で時間がかかる場合があります）</span></div>`;
   container.querySelector('[data-copy]').onclick = e => {
-    navigator.clipboard.writeText(code); e.target.textContent = '✓ コピー済'; setTimeout(()=>e.target.textContent='コピー',1500);
+    copyText(code); e.target.textContent = '✓ コピー済'; setTimeout(()=>e.target.textContent='コピー',1500);
   };
   const outEl = container.querySelector('.rout');
 
-  const shelter = await new webR.Shelter();
+  let shelter = null;
   try {
+    shelter = await new webR.Shelter();
     const canPlot = typeof OffscreenCanvas !== 'undefined';
     const result = await shelter.captureR(code, {
       withAutoprint: true,
@@ -1521,16 +1766,16 @@ async function runR(code, container, analysisId){
     bar.className = 'outbar';
     let barHtml = `<button class="minibtn" data-copyout>📋 出力をコピー</button>`;
     if (tsv) barHtml += `<button class="minibtn" data-copytsv>📋 表をコピー（Excel / Word 貼り付け用）</button>`;
-    if (csv) barHtml += `<button class="minibtn" data-dlcsv style="border-color:var(--r-blue);color:var(--r-blue);font-weight:500">⬇ ダミーCSVをダウンロード</button>`
-      + `<button class="minibtn" data-copycsv>📋 ダミーCSVをコピー（AIに貼り付け用）</button>`;
+    if (csv) barHtml += `<button class="minibtn" data-dlcsv style="border-color:var(--r-blue);color:var(--r-blue);font-weight:500">⬇ 確認してダミーCSVを保存</button>`
+      + `<button class="minibtn" data-copycsv>📋 ダミーCSVをコピー（共有前に再確認）</button>`;
     bar.innerHTML = barHtml;
     outEl.parentNode.insertBefore(bar, outEl);
     bar.querySelector('[data-copyout]').onclick = e => {
-      navigator.clipboard.writeText(outEl.textContent);
+      copyText(outEl.textContent);
       e.target.textContent = '✓ コピーしました'; setTimeout(()=>e.target.textContent='📋 出力をコピー',1500);
     };
     if (tsv) bar.querySelector('[data-copytsv]').onclick = e => {
-      navigator.clipboard.writeText(tsv);
+      copyText(tsv);
       e.target.textContent = '✓ コピーしました（Excelにそのまま貼れます）';
       setTimeout(()=>e.target.textContent='📋 表をコピー（Excel / Word 貼り付け用）',2000);
     };
@@ -1544,8 +1789,8 @@ async function runR(code, container, analysisId){
         setTimeout(() => URL.revokeObjectURL(a.href), 5000);
       };
       bar.querySelector('[data-copycsv]').onclick = e => {
-        navigator.clipboard.writeText(csv);
-        e.target.textContent = '✓ コピーしました'; setTimeout(()=>e.target.textContent='📋 ダミーCSVをコピー（AIに貼り付け用）',1500);
+        copyText(csv);
+        e.target.textContent = '✓ コピーしました'; setTimeout(()=>e.target.textContent='📋 ダミーCSVをコピー（共有前に再確認）',1500);
       };
     }
 
@@ -1583,7 +1828,7 @@ async function runR(code, container, analysisId){
   } catch (e){
     outEl.innerHTML = `<span class="stderr">エラー: ${escHtml(e.message || String(e))}</span>`;
   } finally {
-    shelter.purge();
+    if (shelter) await shelter.purge().catch(e => console.warn('shelter purge failed', e));
   }
 }
 
@@ -1600,8 +1845,11 @@ async function runAnalysis(){
   const btn = document.getElementById('runBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span> 実行中…';
   document.getElementById('codeNote').hidden = false;
-  await runR(code, res, a.id);
-  btn.disabled = false; btn.innerHTML = '<span class="play">▶</span> Rで解析を実行';
+  try {
+    await runR(code, res, a.id);
+  } finally {
+    btn.disabled = false; btn.innerHTML = '<span class="play">▶</span> Rで解析を実行';
+  }
 }
 
 /* =========================================================
@@ -1641,7 +1889,7 @@ freeCode.addEventListener('keydown', e => {
   if ((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); runFree(); }
 });
 function copySnippet(text, btn, label){
-  navigator.clipboard.writeText(text);
+  copyText(text);
   btn.textContent = '✓ コピーしました';
   setTimeout(() => btn.textContent = label, 1500);
 }
@@ -1650,8 +1898,11 @@ async function runFree(){
   const code = freeCode.value.trim();
   if (!code) return;
   freeBtn.disabled = true; freeBtn.innerHTML = '<span class="spin"></span> 実行中…';
-  await runR(code, document.getElementById('freeResults'));
-  freeBtn.disabled = false; freeBtn.innerHTML = '<span class="play">▶</span> 実行';
+  try {
+    await runR(code, document.getElementById('freeResults'));
+  } finally {
+    freeBtn.disabled = false; freeBtn.innerHTML = '<span class="play">▶</span> 実行';
+  }
 }
 
 // init tab strip (disabled until data load)
