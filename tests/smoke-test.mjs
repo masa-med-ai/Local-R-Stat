@@ -166,13 +166,13 @@ function testAnalyses(app, harness) {
       assert(csvText, `${app.html}: privacy-first dummy CSV was not emitted`);
       const fakeRows = harness.api.parseCSV(csvText);
       assert(fakeRows.length === sourceRows.length, `${app.html}: dummy row count changed`);
-      assert(fakeRows[0].every((name, i) => name === `variable_${String(i + 1).padStart(2, '0')}`), `${app.html}: source column names remain in privacy-first output`);
+      assert(fakeRows[0].every((name, i) => name === sourceRows[0][i]), `${app.html}: source column names were not preserved in dummy output`);
       for (let i = 0; i < sourceRows[0].length; i++) {
         const sourceMissing = sourceRows.slice(1).filter(row => row[i] === '').length;
         const fakeMissing = fakeRows.slice(1).filter(row => row[i] === '').length;
         assert(fakeMissing === sourceMissing, `${app.html}: exact missing count changed in column ${i + 1}`);
       }
-      assert(!csvText.includes('PatientID') && !csvText.includes(app.language === 'ja' ? '治療群' : 'TreatmentGroup'), `${app.html}: source labels leaked into privacy-first CSV`);
+      assert(csvText.includes(app.language === 'ja' ? '症例ID' : 'PatientID') && csvText.includes(app.language === 'ja' ? '男性' : 'Male'), `${app.html}: source column/category names were not preserved in dummy CSV`);
 
       harness.setFormState({ privacy: false, exactMissing: true, blockRisk: true });
       const blockedCode = harness.api.genCode({ id: 'synth' });

@@ -646,7 +646,7 @@ synth: `
 <h4>What is this for?</h4>It creates a synthetic CSV for testing code and UI workflows without sending patient data to an external service.
 <h4>Privacy-first mode (default)</h4>
 <ul>
-<li>Column names become variable_01… and all category labels become category_1….</li>
+<li>Column and category names are kept exactly as entered (never generalized). Rename identifying names in the source CSV.</li>
 <li>Dates use a fixed fictional span and ordinary numeric columns use a generic scale. Numeric 0/1 columns remain 0/1 for analysis compatibility.</li>
 <li>Row count, column type, category count, and—when selected—exact missing counts are retained. Means, SDs, real ranges, and row correspondence are not.</li>
 <li>The screen flags identifier-like names, high uniqueness, dates, free text, and rare levels. In structure-first mode, CSV output is blocked by default when risks are found.</li>
@@ -879,7 +879,7 @@ const ANALYSES = [
       {key:'y', label:'Outcome (binary)', kind:'single', filter:'all'},
       {key:'x', label:'Test value / marker (continuous variable)', kind:'single', filter:'num'},
     ], plot:true },
-  { id:'synth', label:'🎲 Generate dummy data', desc:'Creates a CSV for code and UI testing. The default privacy-first mode generalizes column names, category labels, and date ranges and reduces exact matches to source values. This does not guarantee anonymization.',
+  { id:'synth', label:'🎲 Generate dummy data', desc:'Creates a CSV for code and UI testing. Column and category names are kept as entered; the default privacy-first mode generalizes date ranges and numeric scales to reduce exact matches to source values. This does not guarantee anonymization.',
     fields:[], opts:[
       {key:'privacy', label:'Privacy-first mode (generalize names, labels, and date ranges; recommended)', def:true},
       {key:'exactMissing', label:'Preserve the exact number of missing values per column', def:true},
@@ -1625,7 +1625,7 @@ risk <- lapply(names(df), function(nm) risk_reason(df[[nm]], nm))
 risk_cols <- which(lengths(risk) > 0)
 blocked <- !privacy_mode && block_on_risk && (length(risk_cols) > 0 || n < 30)
 
-# Synthesize one column. Privacy-first mode does not reuse real names, labels, spans, or ranges.
+# Synthesize one column. Column and category names are always kept; privacy-first mode only generalizes spans and ranges.
 synth_col <- function(x, nm) {
   miss_n <- sum(is.na(x)); out <- rep(NA, n)
   keep_n <- n - miss_n
@@ -1650,7 +1650,7 @@ synth_col <- function(x, nm) {
         } else vals <- format(as.POSIXct(runif(keep_n, dt$lo, dt$hi), origin="1970-01-01", tz="UTC"), dt$fmt)
       } else {
         u <- sort(unique(as.character(obs)))
-        labels <- if (privacy_mode) paste0("category_", seq_len(length(u))) else if (length(u) == 2) u else paste0(nm, seq_len(length(u)))
+        labels <- u   # keep the user's original category labels as-is
         vals <- sample(rep(labels, length.out = keep_n), keep_n)
       }
     }
@@ -1665,12 +1665,11 @@ fake <- as.data.frame(
   setNames(lapply(names(df), function(nm) synth_col(df[[nm]], nm)), names(df)),
   stringsAsFactors = FALSE, check.names = FALSE)
 
-if (privacy_mode) names(fake) <- sprintf("variable_%02d", seq_along(fake))
-cat(sprintf("Dummy-data mode: %s\\n", if (privacy_mode) "privacy-first (generalized column names, all category labels, date spans, and numeric scales)" else "structure-first (uses original column names, some labels, and ranges)"))
+cat(sprintf("Dummy-data mode: %s\\n", if (privacy_mode) "privacy-first (keeps column and category names; generalizes date spans and numeric scales)" else "structure-first (uses original column names, labels, and ranges)"))
 cat(sprintf("Disclosure-risk screen: caution flags in %d column(s)%s\\n", length(risk_cols), if (n < 30) ", plus a small dataset with fewer than 30 rows" else ""))
 if (length(risk_cols)) {
-  if (privacy_mode) cat("  Column names are hidden in privacy-first mode. Review identifiers, dates, high-uniqueness columns, and rare levels in the source data.\\n")
-  else for (i in risk_cols) cat(sprintf("  ⚠ %s: %s\\n", names(df)[i], paste(risk[[i]], collapse=", ")))
+  for (i in risk_cols) cat(sprintf("  ⚠ %s: %s\\n", names(df)[i], paste(risk[[i]], collapse=", ")))
+  cat("  Note: column and category names are kept as-is in the dummy CSV. Rename identifying names in the source CSV.\\n")
 }
 cat("Caution: neither this screen nor the generator guarantees anonymization or de-identification. External sharing requires organizational review.\\n")
 

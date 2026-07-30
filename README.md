@@ -161,7 +161,7 @@ This feature creates synthetic CSVs for testing code and UI workflows. It is not
 3. Run the generator and review the disclosure-risk warnings and preview.
 4. Save or copy the CSV only after that review.
 
-Privacy-first mode generalizes column names (variable_01…), every categorical label (category_1…), date spans, and ordinary numeric scales. It preserves row count, data types, category cardinality, and optionally the exact number of missing values. Numeric 0/1 columns remain 0/1 for analysis compatibility.
+Column names and categorical labels are always kept exactly as entered; privacy-first mode generalizes date spans and ordinary numeric scales. It preserves row count, data types, category cardinality, and optionally the exact number of missing values. Numeric 0/1 columns remain 0/1 for analysis compatibility. Rename identifying column or category names in the source CSV before sharing.
 
 The generator screens for identifier-like names, ≥80% uniqueness, date/time fields, long free text, rare categories, and datasets with fewer than 30 rows. With privacy-first mode off, the default risk-blocking option suppresses CSV output when these risks are detected. The diagnostic output reports only properties of the dummy CSV and does not print source ranges or date spans in privacy-first mode.
 
@@ -299,7 +299,7 @@ WebR は、R 言語そのものを WebAssembly（ブラウザが直接実行で�
 3. 実行後、開示リスク警告とプレビューを確認する。
 4. 確認後にのみ CSV を保存またはコピーする。
 
-共有安全モードでは、列名を variable_01…、全カテゴリラベルを category_1…へ置換し、日付期間と通常の数値尺度も一般化する。行数、型、カテゴリ数、指定時の正確な欠損数は維持する。解析互換性のため、数値の 0/1 列は 0/1 を維持する。
+列名・カテゴリラベルは常に入力データのまま維持し、共有安全モードでは日付期間と通常の数値尺度を一般化する。行数、型、カテゴリ数、指定時の正確な欠損数は維持する。解析互換性のため、数値の 0/1 列は 0/1 を維持する。識別性のある列名・カテゴリ名は共有前に元 CSV 側で修正すること。
 
 識別子らしい列名、一意率 80% 以上、日付・時刻、長い自由記述、5 件未満のカテゴリ、30 行未満の小規模データを検査する。共有安全モードを OFF にした場合、既定ではリスク検出時に CSV 出力を停止する。共有安全モードの診断表示には、元データの値域や日付期間を出力しない。
 

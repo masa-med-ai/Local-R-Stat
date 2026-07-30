@@ -646,7 +646,7 @@ synth: `
 <h4>何のための機能？</h4>患者データを外部サービスへ渡さず、コードや画面の動作を試すための合成CSVを作ります。
 <h4>共有安全モード（既定）</h4>
 <ul>
-<li>列名は variable_01…、全カテゴリは category_1…へ一般化します。</li>
+<li>列名・カテゴリ名は入力データのまま保持します（一般化しません）。識別性のある名前は元CSV側で修正してください。</li>
 <li>日付は固定の架空期間、通常の数値は汎用尺度へ置き換えます。0/1列は解析互換性のため維持します。</li>
 <li>行数、列型、カテゴリ数、指定時の欠損数を保ちますが、平均・SD・実際の値域・行対応は保ちません。</li>
 <li>識別子らしい列名、高一意率、日付、自由記述、少数カテゴリを検査します。構造優先モードでは危険を検出すると既定でCSV出力を停止します。</li>
@@ -879,7 +879,7 @@ const ANALYSES = [
       {key:'y', label:'アウトカム（2値）', kind:'single', filter:'all'},
       {key:'x', label:'検査値・マーカー（連続変数）', kind:'single', filter:'num'},
     ], plot:true },
-  { id:'synth', label:'🎲 ダミーデータ生成', desc:'コード・画面の動作確認用CSVを生成します。既定の共有安全モードでは列名・カテゴリ名・日付期間を一般化し、元値との一致を抑えます。匿名化を保証する機能ではありません。',
+  { id:'synth', label:'🎲 ダミーデータ生成', desc:'コード・画面の動作確認用CSVを生成します。列名・カテゴリ名は入力データのまま保持し、既定の共有安全モードでは日付期間・数値尺度を一般化して元値との一致を抑えます。匿名化を保証する機能ではありません。',
     fields:[], opts:[
       {key:'privacy', label:'共有安全モード（列名・ラベル・日付期間を一般化、推奨）', def:true},
       {key:'exactMissing', label:'欠損数を列ごとに正確に維持する', def:true},
@@ -1626,7 +1626,7 @@ risk <- lapply(names(df), function(nm) risk_reason(df[[nm]], nm))
 risk_cols <- which(lengths(risk) > 0)
 blocked <- !privacy_mode && block_on_risk && (length(risk_cols) > 0 || n < 30)
 
-# 1列を合成する。共有安全モードでは実際の列名・ラベル・期間・値域を使わない。
+# 1列を合成する。列名・カテゴリ名は常に元のまま。共有安全モードでは期間・値域のみ一般化する。
 synth_col <- function(x, nm) {
   miss_n <- sum(is.na(x)); out <- rep(NA, n)
   keep_n <- n - miss_n
@@ -1651,7 +1651,7 @@ synth_col <- function(x, nm) {
         } else vals <- format(as.POSIXct(runif(keep_n, dt$lo, dt$hi), origin="1970-01-01", tz="UTC"), dt$fmt)
       } else {
         u <- sort(unique(as.character(obs)))
-        labels <- if (privacy_mode) paste0("category_", seq_len(length(u))) else if (length(u) == 2) u else paste0(nm, seq_len(length(u)))
+        labels <- u   # カテゴリ名はユーザーの入力値をそのまま保持する
         vals <- sample(rep(labels, length.out = keep_n), keep_n)
       }
     }
@@ -1666,12 +1666,11 @@ fake <- as.data.frame(
   setNames(lapply(names(df), function(nm) synth_col(df[[nm]], nm)), names(df)),
   stringsAsFactors = FALSE, check.names = FALSE)
 
-if (privacy_mode) names(fake) <- sprintf("variable_%02d", seq_along(fake))
-cat(sprintf("ダミーデータ生成モード: %s\\n", if (privacy_mode) "共有安全（列名・全カテゴリラベル・日付期間・数値尺度を一般化）" else "構造優先（元の列名・一部ラベル・値域を使用）"))
+cat(sprintf("ダミーデータ生成モード: %s\\n", if (privacy_mode) "共有安全（列名・カテゴリ名は保持し、日付期間・数値尺度を一般化）" else "構造優先（元の列名・ラベル・値域を使用）"))
 cat(sprintf("開示リスク検査: %d列で注意項目%s\\n", length(risk_cols), if (n < 30) "、さらに30行未満の小規模データ" else ""))
 if (length(risk_cols)) {
-  if (privacy_mode) cat("  安全モードのため列名は表示しません。元データ側で識別子・日付・高一意率・少数カテゴリを確認してください。\\n")
-  else for (i in risk_cols) cat(sprintf("  ⚠ %s: %s\\n", names(df)[i], paste(risk[[i]], collapse=", ")))
+  for (i in risk_cols) cat(sprintf("  ⚠ %s: %s\\n", names(df)[i], paste(risk[[i]], collapse=", ")))
+  cat("  ※列名・カテゴリ名はダミーCSVにそのまま残ります。識別性のある名前は元CSV側で修正してください。\\n")
 }
 cat("注意: この検査と生成処理は匿名化・非識別化を保証しません。外部共有には組織の審査が必要です。\\n")
 
